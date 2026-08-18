@@ -1,0 +1,3107 @@
+# ============================================================================
+# PUBLIC / STERILIZED BUILD (wp47d2_public_v5.7) - generated 2026-08-14
+# Derived from wp47d2_rebuild v5.7 (the locked production GUI) with:
+#   - all licensed/trademarked artwork and terms removed (original art only)
+#   - every credential externalized to secrets.yaml (see secrets.yaml.example)
+#   - network addresses parameterized in the substitutions block below
+# Compiles as-shipped from this folder. Icons: Material Design Icons
+# (Templarian/MaterialDesign, Apache 2.0). Ship schematic: original drawing.
+# ============================================================================
+# Board: Waveshare ESP32-P4-WIFI6-DEV-KIT (WP47D2 / Display 2)
+# 32mb psram, 32mb flash (16MB flash_size is what boots - do not "fix"),
+# 720x1280, ILI9881C panel, ES8311 codec + ES7210 mic ADC, GT911 touch.
+#
+# CONFIG: WP47D2 REBUILD S1 - started 2026-08-09 after the 1:37 PM add-on
+# reflash left the device dark with app1 erased (no rollback partition).
+# Clean staged rebuild per Todd's direction: standard components only,
+# retro-terminal styling later, no custom fonts / PUA glyphs / embedded
+# assets. Stage 1 = Section 1 of wp47d2_gold_v1.yaml verbatim (the proven
+# must-have-to-flash zone), minus the LVGL/script hooks that don't exist yet.
+# Same device name + API key as always so HA reattaches to the existing
+# entities. Built with the local toolchain (TCM assert patch verified
+# intact 2026-08-09 before this compile).
+
+###############################################################################
+# SECTION: 1. DEVICE IDENTITY & NETWORK
+###############################################################################
+
+esphome:
+  name: "wp47d2"
+  friendly_name: "wp47d2"
+  project:
+    name: "durant.wp47d2"
+    version: "v5.7-public-2026-08-14"
+  # v3.8: sync the VOL slider UI to the media_player's flash-restored volume
+  # at boot, so the slider always shows the one real volume. Priority -100 =
+  # runs after every component (incl. media_player restore + LVGL) is up.
+  on_boot:
+    priority: -100.0
+    then:
+      - lvgl.slider.update:
+          id: slider_vol
+          value: !lambda 'return (int)(id(display2_media).volume * 100.0f);'
+      # v3.9 diagnostic: log what the ES8311 DAC register ACTUALLY holds
+      # after the media_player's boot restore - proves whether the restore
+      # write landed in the codec.
+      - lambda: |-
+          ESP_LOGI("audio_diag", "boot: media_player volume=%.0f%% -> DAC reg readback=%.0f%%",
+                   id(display2_media).volume * 100.0f, id(audio_codec).volume() * 100.0f);
+
+api:
+  encryption:
+    key: !secret wp47d2_api_key
+  on_client_connected:
+    - lvgl.label.update: {id: status_msg, text: "HA LINK ESTABLISHED"}
+    - script.execute: fetch_summaries
+
+esp32:
+  variant: ESP32P4
+  engineering_sample: true
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    # Both PSRAM-stack flags off, verified in the final generated
+    # sdkconfig.wp47d2 after compile before flashing (fleet rule).
+    sdkconfig_options:
+      CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY: "n"
+      CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM: "n"
+
+ota:
+  - platform: esphome
+    id: ota_esphome_1
+    port: 3232
+    password: !secret wp47d2_ota_password
+    allow_partition_access: true
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: ${device_static_ip}
+    gateway: ${gateway_ip}
+    subnet: 255.255.255.0
+    dns1: ${gateway_ip}
+  on_connect:
+    - lvgl.label.update: {id: wifi_status_icon, text_color: "${c_green}"}
+    - lvgl.label.update: {id: status_msg, text: "WIFI LINK ESTABLISHED"}
+  on_disconnect:
+    - lvgl.label.update: {id: wifi_status_icon, text_color: "${c_red}"}
+    - lvgl.label.update: {id: status_msg, text: "WIFI LINK LOST"}
+
+esp32_hosted:
+  active_high: true
+  clk_pin: GPIO18
+  cmd_pin: GPIO19
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+  reset_pin: GPIO54
+  type: sdio
+  variant: ESP32C6
+
+update:
+  - platform: esp32_hosted
+    type: http
+    source: https://esphome.github.io/esp-hosted-firmware/manifest/esp32c6.json
+    name: C6 Firmware
+
+psram:
+  mode: hex
+  speed: 200MHZ
+
+web_server:
+
+mdns:
+  disabled: false
+
+http_request:
+  verify_ssl: false
+
+# CAMERA STAGE (2026-08-13, Todd's ask): Frigate snapshot fetch into the main
+# viewer, ported from this device's own proven wp47d2_landscape.yaml mechanism
+# (URLs + the on_download_finished -> lvgl.image.update redraw fix, which is
+# mandatory - `src:` alone binds only once at setup, see the fleet checklist).
+# One shared online_image; the two camera buttons retarget it via set_url.
+# update_interval: never - fetch only on button tap, per the fleet's
+# on-demand-over-polling rule.
+online_image:
+  - id: viewer_cam_img
+    url: "http://${ha_host_ip}:5000/api/p2/latest.jpg"
+    format: JPEG
+    type: RGB565
+    # view_frame inner box is 712x452 (720x460 minus 4px border) - resize
+    # fits-within preserving aspect, same behavior confirmed on the old build.
+    resize: 712x452
+    update_interval: never
+    on_download_finished:
+      - lvgl.image.update:
+          id: viewer_cam_widget
+          src: viewer_cam_img
+      - lvgl.widget.show: viewer_cam_widget
+      # v4.4 Stage B: name the actual camera, and stamp the age clock.
+      - lambda: |-
+          id(g_snap_time) = id(sntp_time).now().is_valid()
+                            ? (int) id(sntp_time).now().timestamp : 0;
+      - lvgl.label.update:
+          id: status_msg
+          text: !lambda 'static std::string r; r = id(g_snap_name) + " ON MAIN VIEWER"; return r.c_str();'
+      - lvgl.widget.show: age_ring
+      - lvgl.widget.show: age_text
+      - lvgl.widget.show: age_caption
+
+logger:
+  hardware_uart: UART0
+  level: DEBUG
+
+network:
+  enable_ipv6: false
+
+
+###############################################################################
+# SECTION: 3. HARDWARE ABSTRACTION LAYER (Stage 2)
+# Every value below is from Todd's last-working Display 2 yaml
+# (WP47D2_Landscape__Display_2.yaml) - proven on this exact board,
+# not re-derived. Touch transform stays vendor-default (all false);
+# lvgl rotation: 90 does the landscape work.
+###############################################################################
+
+i2c:
+  - id: bus_a
+    sda: GPIO7
+    scl: GPIO8
+
+esp_ldo:
+  - id: mipi_phy_ldo
+    channel: 3
+    voltage: 2.5V
+
+display:
+  - platform: mipi_dsi
+    id: display1
+    model: WAVESHARE-7-DSI-TOUCH-A
+    reset_pin: GPIO27
+
+touchscreen:
+  - platform: gt911
+    id: touch1
+    i2c_id: bus_a
+    transform:
+      swap_xy: false
+      mirror_x: false
+      mirror_y: false
+    # Diagnostic only (remove once touch is confirmed): logs all three
+    # pipeline stages per tap - raw sensor, this transform's output, and
+    # the value LVGL actually hit-tests after its rotation:90 remap
+    # (final_x = y, final_y = native_width-1 - x, native width 720).
+    on_touch:
+      - if:
+          condition:
+            lambda: 'return id(g_dimmed);'
+          then:
+            - script.execute: wake_from_timeout
+      - lambda: |-
+          int final_x = touch.y;
+          int final_y = 719 - touch.x;
+          ESP_LOGI("touch_diag", "FINAL(lvgl)=(%d,%d) | transform=(%d,%d) | raw=(%d,%d)",
+              final_x, final_y, touch.x, touch.y, touch.x_raw, touch.y_raw);
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO26
+    frequency: 5000Hz
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Display Backlight"
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+
+
+###############################################################################
+# SECTION: 3b. AUDIO (Stage v3.0 - PLAYBACK ONLY; mic/voice = next stage)
+# All values from WP47D2_Landscape__Display_2.yaml (Todd-proven on this
+# board): I2S pins 10/12/13, ES8311 @0x18 on bus_a, DOUT GPIO9 stereo,
+# timeout: never (bus-busy fix), PA enable GPIO53 active-high (the
+# historic "silent despite everything working" root cause).
+###############################################################################
+
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: GPIO10
+    i2s_bclk_pin: GPIO12
+    i2s_mclk_pin: GPIO13
+
+audio_dac:
+  - platform: es8311
+    id: audio_codec
+    i2c_id: bus_a
+    address: 0x18
+    use_mclk: true
+    use_microphone: false
+
+audio_adc:
+  - platform: es7210
+    id: mic_adc
+    i2c_id: bus_a
+
+switch:
+  - platform: gpio
+    pin: GPIO53
+    id: speaker_pa_enable
+    name: "Audio PA Enable"
+    restore_mode: ALWAYS_ON
+
+speaker:
+  - platform: i2s_audio
+    id: beep_speaker
+    i2s_audio_id: i2s_bus
+    audio_dac: audio_codec
+    dac_type: external
+    i2s_dout_pin: GPIO9
+    channel: stereo
+    timeout: never
+
+  - platform: resampler
+    id: announce_resampler
+    output_speaker: beep_speaker
+
+rtttl:
+  id: beeper
+  speaker: beep_speaker
+  # v3.9: 0.5 -> 1.0 (+6 dB) fixed "far too quiet"; v3.9.1: Todd live:
+  # "much too loud, cut it back by a third" -> 0.65.
+  gain: 0.65
+
+media_player:
+  - platform: speaker
+    id: display2_media
+    name: "Display 2 Computer Voice"
+    # v3.8 AUDIO FIX. Root cause of "very very low audio": this component
+    # restores volume at EVERY boot (flash pref, else volume_initial whose
+    # ESPHome default is 0.5) and pushes it through announce_resampler ->
+    # beep_speaker -> ES8311 DAC (forwarding confirmed in ESPHome source).
+    # The ES8311 maps volume LINEARLY to its 0-255 register at 0.5 dB/step
+    # with 0 dB at 0.75 - so 0.5 = -31.5 dB (whisper), and the old direct
+    # slider range 0-100% spanned -95.5..+32 dB (mostly inaudible travel).
+    # volume_min/max below remap the user-facing 0-100% into the USEFUL
+    # window: 0% = -25.5 dB, ~62% = 0 dB, 100% = +32 dB (digital gain -
+    # top end can clip on loud sources; that's the user's call).
+    # 0% via HA still hard-mutes (mute logic keys off the unbounded value).
+    # v3.10 (Todd live: "very screechy"): the old max of 100% drove the DAC
+    # to +32 dB digital gain - pure clipping distortion, and slider travel
+    # up there is inaudible (everything is already at the ceiling). New
+    # window caps at 75% = the ES8311's 0 dB point: 0% = -25.5 dB quiet,
+    # 100% = 0 dB clean maximum. Loudness now comes from rtttl gain and the
+    # analog stage, never from digital overdrive.
+    volume_initial: 80%
+    volume_min: 55%
+    volume_max: 75%
+    # v3.8 (Todd's live request 2026-08-10): audible feedback on every volume
+    # change - a short chirp AT the new level, from HA or the VOL slider
+    # alike. Side effect: one chirp at boot when the restored volume applies
+    # (doubles as an "audio system online" ack). Dragging the HA slider can
+    # chirp per step - that's the feedback working.
+    on_volume:
+      - rtttl.play: "volack:d=32,o=6,b=250:e,g"
+    announcement_pipeline:
+      speaker: announce_resampler
+      format: WAV
+
+microphone:
+  - platform: i2s_audio
+    id: display2_mic
+    i2s_audio_id: i2s_bus
+    adc_type: external
+    i2s_din_pin: GPIO11
+    channel: left
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+voice_assistant:
+  id: va
+  microphone: display2_mic
+  speaker: announce_resampler
+  use_wake_word: false
+  noise_suppression_level: 0
+  auto_gain: 31dBFS
+  volume_multiplier: 1.0
+  on_listening:
+    - lvgl.widget.show: va_vortex
+    - lvgl.widget.show: va_vortex2
+    - lvgl.widget.show: va_vortex3
+    - lvgl.widget.update: {id: comms_btn, bg_color: "${c_green}"}
+    - lvgl.label.update: {id: comms_state, text: "LISTENING"}
+    - lvgl.label.update: {id: status_msg, text: "INTERFACE ENGINE - LISTENING"}
+  on_stt_vad_end:
+    - rtttl.play: "ack:d=16,o=6,b=200:c,e,g"
+    - lvgl.widget.update: {id: comms_btn, bg_color: "${c_amber}"}
+    - lvgl.label.update: {id: comms_state, text: "PROCESSING"}
+    - lvgl.label.update: {id: status_msg, text: "INTERFACE ENGINE - PROCESSING"}
+  on_stt_end:
+    - lvgl.label.update:
+        id: status_msg
+        text: !lambda 'static std::string r; r = "HEARD: " + x; return r.c_str();'
+  on_tts_start:
+    - script.execute: msd_hide
+    - script.execute: viewer_gauges_hide
+    - lvgl.widget.hide: viewer_cam_widget
+    - lvgl.widget.show: va_vortex
+    - lvgl.widget.show: va_vortex2
+    - lvgl.widget.show: va_vortex3
+    - lvgl.label.update:
+        id: viewer_placeholder
+        text: !lambda 'static std::string r; r = x; return r.c_str();'
+  on_tts_stream_end:
+    - lvgl.widget.hide: va_vortex
+    - lvgl.widget.hide: va_vortex2
+    - lvgl.widget.hide: va_vortex3
+    - script.execute: viewer_reset_timer
+    - lvgl.widget.update: {id: comms_btn, bg_color: "${c_comms}"}
+    - lvgl.label.update: {id: comms_state, text: "TAP TO SPEAK"}
+    - lvgl.label.update: {id: status_msg, text: "INTERFACE ENGINE READY"}
+  on_end:
+    - lvgl.widget.hide: va_vortex
+    - lvgl.widget.hide: va_vortex2
+    - lvgl.widget.hide: va_vortex3
+    - if:
+        condition:
+          not:
+            voice_assistant.is_running:
+        then:
+          - lvgl.widget.update: {id: comms_btn, bg_color: "${c_comms}"}
+          - lvgl.label.update: {id: comms_state, text: "TAP TO SPEAK"}
+  on_error:
+    - lvgl.widget.hide: va_vortex
+    - lvgl.widget.hide: va_vortex2
+    - lvgl.widget.hide: va_vortex3
+    - script.execute: viewer_reset_timer
+    - lvgl.widget.update: {id: comms_btn, bg_color: "${c_red}"}
+    - lvgl.label.update: {id: comms_state, text: "ERROR - TAP TO RETRY"}
+    - lvgl.label.update:
+        id: status_msg
+        text: !lambda 'static std::string r; r = "INTERFACE ENGINE ERROR: " + code; return r.c_str();'
+    - delay: 2s
+    - lvgl.widget.update: {id: comms_btn, bg_color: "${c_comms}"}
+    - lvgl.label.update: {id: comms_state, text: "TAP TO SPEAK"}
+
+
+###############################################################################
+# SECTION: 2. DESIGN LOGIC & OPTIONS (Stage 3)
+# GOLD STANDARD v1 palette, ported verbatim from wp47d2_gold_v1.yaml.
+###############################################################################
+
+substitutions:
+  config_name: "WP47D2 v5.7 PUBLIC"
+  # ---- YOUR NETWORK - edit these three values ----
+  device_static_ip: "192.168.1.50"   # a free static IP for the display
+  gateway_ip: "192.168.1.1"          # your router
+  ha_host_ip: "192.168.1.10"         # your Home Assistant host
+  c_home: "0xA9D3EE"
+  c_comms: "0xCC99CC"
+  c_batt: "0x4DB380"      # v4.0 darker green (DEVICE STATUS tab, Todd contrast ask 2026-08-12)
+  c_lights: "0xF2D45C"    # periwinkle  # v3.12 mockup-approved yellow
+  c_devices: "0xA98BE8"   # lavender
+  c_zigbee: "0x9999CC"
+  c_orange: "0xFF9900"
+  c_blue: "0x99CCFF"
+  c_amber: "0xFFCC66"
+  c_red: "0xCC6666"
+  c_green: "0x66CC99"
+  c_paper: "0xE8E8FF"
+  c_dim: "0x666688"
+  # Tab ramp additions (v2.6 palette): distinct cool hues, black-text safe
+  t_repairs: "0x66CCCC"   # teal - v3.19: was amber 0xF2B35C, clashed with energy orange + new amber accents
+  t_updates: "0x6C8FD8"   # steel blue
+  t_energy: "0xFF9900"    # orchid  # v3.12 mockup-approved orange
+  # v4.4 (Todd live 2026-08-13): teal read too close to DEVICE STATUS green at
+  # a glance. CRITICAL SENSORS moves to ice-white - maximum separation
+  # from every other tab, and the green/red state dot reads hardest on it.
+  # v4.9 (Todd: white is "the most unimaginative color"). Rose - the one
+  # warm hue no other tab occupies, black-text safe, far enough from the
+  # comms orchid not to clash. One-token swap for the other FM-2
+  # candidates: coral 0xE88B7D, sand 0xD9BE9A, pale mint 0x9EE8C4.
+  c_sensors: "0xE39AAE"   # rose - CRITICAL SENSORS tab
+  # v4.7 (Todd 2026-08-13): Home Assistant's own brand blue, so the two HA
+  # buttons read as "this is Home Assistant" the way the HA logo does.
+  # #18BCF2 is HA's published brand blue; the dark tone is the logo
+  # watermark that the button text now sits on top of.
+  c_ha: "0x18BCF2"
+  c_ha_dark: "0x0B6A8A"
+
+# Primary clock = sntp WITH explicit timezone (the old wrong-clock bug was
+# sntp defaulting to UTC, not sntp itself). ha_time kept as well - it wasn't
+# receiving time pushes on the rebuild despite a healthy API connection
+# (suspect the HA ESPHome integration entry needs a reload after the rebuild).
+time:
+  - platform: homeassistant
+    id: ha_time
+  - platform: sntp
+    id: sntp_time
+    timezone: America/Chicago
+    on_time_sync:
+      - lvgl.label.update: {id: status_msg, text: "ALL SYSTEMS ONLINE"}
+
+# v3.11: live weather in the header (Todd's ask 2026-08-10). Source is the
+# house's own HA weather entity (Rock Canyon), pushed on change - no polling.
+sensor:
+  - platform: homeassistant
+    id: wx_temp
+    entity_id: weather.rock_canyon_rock_canyon_weather
+    attribute: temperature
+    on_value:
+      - script.execute: update_wx_line
+
+text_sensor:
+  - platform: homeassistant
+    id: wx_state
+    entity_id: weather.rock_canyon_rock_canyon_weather
+    on_value:
+      - script.execute: update_wx_line
+
+image:
+  # Idle/MSD art = original "U.S.S. Durant" schematic, drawn from scratch
+  # (no licensed artwork). Live-data callouts overlay it.
+  - file: "uss_durant_msd_712x452.png"
+    id: msd_img
+    type: RGB565
+
+font:
+  - id: montserrat_bold_64
+    file: "gfonts://Montserrat@700"
+    size: 64
+    bpp: 4
+  - id: montserrat_bold_40
+    file: "gfonts://Montserrat@700"
+    size: 40
+    bpp: 4
+  - id: montserrat_bold_20
+    file: "gfonts://Montserrat@700"
+    size: 20
+    bpp: 4
+  - id: montserrat_bold_16
+    file: "gfonts://Montserrat@700"
+    size: 16
+    bpp: 4
+  - id: montserrat_16
+    file: "gfonts://Montserrat@400"
+    size: 16
+    bpp: 4
+  - id: montserrat_24
+    file: "gfonts://Montserrat@400"
+    size: 24
+    bpp: 4
+  - id: montserrat_12
+    file: "gfonts://Montserrat@400"
+    size: 12
+    bpp: 4
+  - id: montserrat_14
+    file: "gfonts://Montserrat@400"
+    size: 14
+    bpp: 4
+  - id: montserrat_bold_14
+    file: "gfonts://Montserrat@700"
+    size: 14
+    bpp: 4
+  - id: montserrat_bold_24
+    file: "gfonts://Montserrat@700"
+    size: 24
+    bpp: 4
+  - id: montserrat_bold_28
+    file: "gfonts://Montserrat@700"
+    size: 28
+    bpp: 4
+  # v3.21: Material Design Icons (HA's own icon language). Apache 2.0 -
+  # attribution: Templarian/MaterialDesign. Codepoints verified against the
+  # project's published materialdesignicons.css 2026-08-11, not guessed.
+  # Plane-15 PUA codepoints REQUIRE the 8-digit \U escape form.
+  - id: mdi_icons_20
+    file:
+      type: web
+      url: "https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf"
+    size: 20
+    bpp: 4
+    glyphs: [
+      "\U000F0335", # mdi-lightbulb (LIGHTS tab)
+      "\U000F05B7", # mdi-wrench (REPAIRS tab)
+      "\U000F0599", # weather-sunny
+      "\U000F0594", # weather-night (clear-night)
+      "\U000F0595", # weather-partly-cloudy
+      "\U000F0590", # weather-cloudy
+      "\U000F0597", # weather-rainy
+      "\U000F0596", # weather-pouring
+      "\U000F0593", # weather-lightning
+      "\U000F067E", # weather-lightning-rainy
+      "\U000F0598", # weather-snowy
+      "\U000F067F", # weather-snowy-rainy
+      "\U000F0591", # weather-fog
+      "\U000F059D", # weather-windy
+      "\U000F0592", # weather-hail
+    ]
+  - id: mdi_icons_24
+    file:
+      type: web
+      url: "https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf"
+    size: 24
+    bpp: 4
+    glyphs: ["\U000F07AE"] # mdi-cctv (CAM buttons)
+  - id: mdi_icons_32
+    file:
+      type: web
+      url: "https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf"
+    size: 32
+    bpp: 4
+    glyphs: ["\U000F0502"] # mdi-television (MV button)
+  - id: mdi_icons_48
+    file:
+      type: web
+      url: "https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf"
+    size: 48
+    bpp: 4
+    # v4.7: F07D0 = mdi-home-assistant, the HA logo mark. Codepoint verified
+    # against the published materialdesignicons.css 2026-08-13, not guessed.
+    glyphs: ["\U000F0502", "\U000F07D0"] # mdi-television (MV), mdi-home-assistant (HA buttons)
+  - id: mdi_icons_64
+    file:
+      type: web
+      url: "https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf"
+    size: 64
+    bpp: 4
+    glyphs: ["\U000F0567"] # mdi-video (CAM buttons, v4.4 big-icon style)
+  - id: mdi_icons_26
+    file:
+      type: web
+      url: "https://raw.githubusercontent.com/Templarian/MaterialDesign-Webfont/master/fonts/materialdesignicons-webfont.ttf"
+    size: 26
+    bpp: 4
+    glyphs: ["\U000F0335", "\U000F07AE", "\U000F050F"] # lightbulb, cctv (FRIGATE), thermometer (ENVIRONMENT v5.6)
+  - id: montserrat_bold_12
+    file: "gfonts://Montserrat@700"
+    size: 12
+    bpp: 4
+
+
+###############################################################################
+# SECTION: 4. UI (Stage 3 - GOLD layout skeleton, standard components only)
+# Geometry ported from wp47d2_gold_v1.yaml (design authority:
+# WP47D2_GOLD_STANDARD_v1.html). Per FLEET_BUILD_STANDARD addendum
+# 2026-08-09 section 7: no PUA/custom glyphs - the three header icons use
+# LVGL's built-in LV_SYMBOL codepoints as ASCII yaml escapes (wifi F1EB,
+# battery-full F240, gear F013) on the BUILT-IN montserrat_20 face (gfonts
+# faces don't carry the symbol range). rtttl acks, camera fetch, voice, and
+# detail views arrive in their own later stages - cam/comms buttons echo to
+# the status bar for now. Tab recolor interaction (the GOLD signature) is
+# fully live.
+###############################################################################
+
+interval:
+  - interval: 60s
+    then:
+      - script.execute: fetch_summaries
+  # v5.4: snapshot-age readout (green under 60s, amber past it)
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(g_snap_time) > 0 && id(sntp_time).now().is_valid();'
+          then:
+            - lvgl.arc.update:
+                id: age_ring
+                value: !lambda |-
+                  int age = (int) id(sntp_time).now().timestamp - id(g_snap_time);
+                  if (age < 0) age = 0;
+                  return age > 60 ? 60 : age;
+            - lvgl.label.update:
+                id: age_text
+                text: !lambda |-
+                  static std::string r;
+                  int age = (int) id(sntp_time).now().timestamp - id(g_snap_time);
+                  if (age < 0) age = 0;
+                  char b[16];
+                  if (age < 60) snprintf(b, sizeof(b), "%dS", age);
+                  else snprintf(b, sizeof(b), "%d:%02d", age / 60, age % 60);
+                  r = b;
+                  return r.c_str();
+            - if:
+                condition:
+                  lambda: 'return ((int) id(sntp_time).now().timestamp - id(g_snap_time)) >= 60;'
+                then:
+                  - lvgl.arc.update: {id: age_ring, indicator: {arc_color: "${c_amber}"}}
+                  - lvgl.label.update: {id: age_text, text_color: "${c_amber}"}
+                else:
+                  - lvgl.arc.update: {id: age_ring, indicator: {arc_color: "${c_green}"}}
+                  - lvgl.label.update: {id: age_text, text_color: "${c_green}"}
+  # v4.7 alarm blink. Two boolean tests per tick when nothing is wrong.
+  - interval: 600ms
+    then:
+      - lambda: 'id(g_flash_phase) = !id(g_flash_phase);'
+      - if:
+          condition:
+            lambda: 'return id(g_flash_core);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(g_flash_phase);'
+                then:
+                  - lvgl.widget.update: {id: msd_core_ha, bg_color: "${c_amber}"}
+                else:
+                  - lvgl.widget.update: {id: msd_core_ha, bg_color: 0x1A1A1A}
+      - if:
+          condition:
+            lambda: 'return id(g_flash_sens);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(g_flash_phase);'
+                then:
+                  - lvgl.widget.update: {id: msd_core_sens, bg_color: "${c_red}"}
+                else:
+                  - lvgl.widget.update: {id: msd_core_sens, bg_color: 0x1A1A1A}
+  - interval: 1s
+    then:
+      - lvgl.label.update:
+          id: status_line
+          text: !lambda |-
+            static std::string r;
+            auto now = id(sntp_time).now();
+            if (now.is_valid()) {
+              char tb[16];
+              now.strftime(tb, sizeof(tb), "%l:%M");
+              r = std::string(tb) + (now.hour < 12 ? " am" : " pm");
+            } else {
+              r = "syncing";
+            }
+            return r.c_str();
+      - lvgl.label.update:
+          id: date_line
+          text: !lambda |-
+            static std::string r;
+            auto now = id(sntp_time).now();
+            if (now.is_valid()) {
+              // v3.11: no leading zeros (8/10/2026, not 08/10/2026)
+              char db[16];
+              snprintf(db, sizeof(db), "%d/%d/%d", now.month, now.day_of_month, now.year);
+              r = db;
+            } else {
+              r = "--/--/----";
+            }
+            return r.c_str();
+      - lvgl.label.update:
+          id: idle_clock
+          text: !lambda |-
+            static std::string r;
+            auto now = id(sntp_time).now();
+            if (now.is_valid()) {
+              char tb[16];
+              now.strftime(tb, sizeof(tb), "%l:%M");
+              r = std::string(tb) + (now.hour < 12 ? " am" : " pm");
+            } else { r = ""; }
+            return r.c_str();
+      - lvgl.label.update:
+          id: idle_date
+          text: !lambda |-
+            static std::string r;
+            auto now = id(sntp_time).now();
+            if (now.is_valid()) {
+              char db[24];
+              now.strftime(db, sizeof(db), "%A");
+              char d2[40];
+              snprintf(d2, sizeof(d2), "%s %d/%d", db, now.month, now.day_of_month);
+              r = d2;
+            } else { r = ""; }
+            return r.c_str();
+
+globals:
+  - id: g_dimmed
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: g_brt_saved
+    type: float
+    restore_value: false
+    initial_value: '0.8'
+  - id: g_volume
+    type: int
+    restore_value: true
+    initial_value: '50'
+  - id: g_view_home
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+  # v4.4 Stage B: epoch second the viewer snapshot finished downloading, and
+  # the friendly name of whichever camera it came from. 0 = no snapshot on
+  # screen, which hides the age ring entirely.
+  - id: g_snap_time
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: g_snap_name
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  # v4.7: Todd asked for the CORE UPDATES dot to flash when something is
+  # actually pending - "I think that's the only one that we want
+  # flashing" - and then asked whether CRIT SENSORS should too. Both get
+  # the mechanism; both only fire on a real alarm state, so a healthy
+  # board stays completely still.
+  - id: g_flash_core
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: g_flash_sens
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: g_deep
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: g_flash_phase
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+script:
+  # v3.16: live tab data - HA computes each display string server-side via
+  # /api/template (the OLD landscape build's proven pattern + exact templates,
+  # ported verbatim, only the output words restyled to terminal caps).
+  - id: fetch_summaries
+    mode: restart
+    then:
+      - http_request.post:
+          url: "http://${ha_host_ip}:8123/api/template"
+          request_headers:
+            Authorization: !secret ha_token_bearer
+            Content-Type: "application/json"
+          json:
+            template: "{% set t = ['sensor.family_room_broadlink_remote_temperature','sensor.master_echo_temperature_2','sensor.smartthings_motion_sensor_temperature','sensor.3rd_bay_bluecharm_bc021pro_temperature'] | map('states') | select('ne','unknown') | select('ne','unavailable') | map('float') | list %}{{ t | min | round(0) | int }}\u00B0 - {{ t | max | round(0) | int }}\u00B0F IN"
+          capture_response: true
+          max_response_buffer_size: 512
+          on_response:
+            - lvgl.label.update: {id: v_lights, text: !lambda 'return body.c_str();'}
+      - http_request.post:
+          url: "http://${ha_host_ip}:8123/api/template"
+          request_headers:
+            Authorization: !secret ha_token_bearer
+            Content-Type: "application/json"
+          json:
+            template: "{{ states.sensor | selectattr('attributes.device_class','defined') | selectattr('attributes.device_class','eq','battery') | rejectattr('state','in',['unknown','unavailable']) | map(attribute='state') | map('int') | select('le',20) | list | count }} LOW BAT - {{ issues() | length }} REPAIRS"
+          capture_response: true
+          max_response_buffer_size: 512
+          on_response:
+            - lvgl.label.update: {id: v_batt, text: !lambda 'return body.c_str();'}
+            # v4.7: the board gets a compact form - the tab's full
+            # sentence wrapped to two lines in a 170px callout.
+            - lvgl.label.update:
+                id: msd_v_batt
+                text: !lambda |-
+                  static std::string r;
+                  int low = 0, rep = 0;
+                  sscanf(body.c_str(), "%d LOW BAT - %d", &low, &rep);
+                  char b[32];
+                  snprintf(b, sizeof(b), "%d BAT / %d REP", low, rep);
+                  r = b;
+                  return r.c_str();
+            # v4.0: one call carries both counts - parse "N LOW BAT - M REPAIRS"
+            - if:
+                condition:
+                  lambda: |-
+                    int low = 0, rep = 0;
+                    sscanf(body.c_str(), "%d LOW BAT - %d", &low, &rep);
+                    return (low > 0) || (rep > 0);
+                then:
+                  # v4.7: the tab's own LED is gone (Todd's call); the MSD
+                  # board node is now the only place this state shows.
+                  - lvgl.widget.update: {id: msd_core_batt, bg_color: "${c_red}"}
+                else:
+                  - lvgl.widget.update: {id: msd_core_batt, bg_color: "${c_green}"}
+            # v4.0: header battery icon = fleet low-battery state (Todd-approved rec #3)
+            - if:
+                condition:
+                  lambda: 'return atoi(body.c_str()) > 0;'
+                then:
+                  - lvgl.label.update: {id: batt_icon, text_color: "${c_amber}"}
+                else:
+                  - lvgl.label.update: {id: batt_icon, text_color: "${c_green}"}
+      - http_request.post:
+          url: "http://${ha_host_ip}:8123/api/template"
+          request_headers:
+            Authorization: !secret ha_token_bearer
+            Content-Type: "application/json"
+          json:
+            template: "{{ states.update | selectattr('state','eq','on') | list | count }} AVAIL"
+          capture_response: true
+          max_response_buffer_size: 512
+          on_response:
+            - lvgl.label.update: {id: v_updates, text: !lambda 'return body.c_str();'}
+            - lvgl.label.update: {id: msd_v_upd, text: !lambda 'return body.c_str();'}
+            - lvgl.label.update:
+                id: badge_upd_lbl
+                text: !lambda 'static std::string r; r = std::to_string(atoi(body.c_str())); return r.c_str();'
+            - if:
+                condition:
+                  lambda: 'return atoi(body.c_str()) > 0;'
+                then:
+                  - lvgl.widget.update: {id: msd_core_upd, bg_color: "${c_amber}"}
+                  - lvgl.widget.show: badge_upd
+                else:
+                  - lvgl.widget.update: {id: msd_core_upd, bg_color: "${c_green}"}
+                  - lvgl.widget.hide: badge_upd
+            # badge goes red at 5+ pending updates (Todd-approved rec #1)
+            - if:
+                condition:
+                  lambda: 'return atoi(body.c_str()) >= 5;'
+                then:
+                  - lvgl.widget.update: {id: badge_upd, bg_color: "${c_red}"}
+                else:
+                  - lvgl.widget.update: {id: badge_upd, bg_color: "${c_orange}"}
+      - http_request.post:
+          url: "http://${ha_host_ip}:8123/api/template"
+          request_headers:
+            Authorization: !secret ha_token_bearer
+            Content-Type: "application/json"
+          json:
+            template: "{% set ids = ['sensor.attic2_kasa_current_consumption','sensor.hair_dryer_kasa_current_consumption','sensor.master_kasa_current_consumption','sensor.master_kasa2_current_consumption','sensor.cave_kasa_current_consumption','sensor.credenza_kasa_current_consumption','sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power','sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power','sensor.office_main_mss2_power','sensor.shelly_zwave_plug3z_electric_consumption_w','sensor.office_zwave_plug1_electric_consumption_w','sensor.kitchen_zwave_plug4_electric_consumption_w','sensor.attic_zwave_plug3_electric_consumption_w','sensor.mss2_power','sensor.master_bedroom_mastershellyplug1_power','sensor.office_officeshellyplug2_power'] %}{{ '%.1f'|format(ids | map('states') | select('ne','unknown') | select('ne','unavailable') | map('float',0) | sum) }} W"
+          capture_response: true
+          max_response_buffer_size: 512
+          on_response:
+            - lvgl.label.update: {id: v_energy, text: !lambda 'return body.c_str();'}
+            # v5.1: this mirror MUST live in THIS on_response - it briefly
+            # sat in the core-updates response below and read "0".
+            - lvgl.label.update: {id: msd_v_energy, text: !lambda 'return body.c_str();'}
+            # v4.7: the energy node reads house load at a glance -
+            # green under 900 W, amber to 1800 W, red above it.
+            - if:
+                condition:
+                  lambda: 'return atof(body.c_str()) >= 1800.0f;'
+                then:
+                  - lvgl.widget.update: {id: msd_core_energy, bg_color: "${c_red}"}
+                else:
+                  - if:
+                      condition:
+                        lambda: 'return atof(body.c_str()) >= 900.0f;'
+                      then:
+                        - lvgl.widget.update: {id: msd_core_energy, bg_color: "${c_amber}"}
+                      else:
+                        - lvgl.widget.update: {id: msd_core_energy, bg_color: "${c_green}"}
+      # v4.7: CRITICAL SENSORS is the top tab now, so it had to stop showing a
+      # hardcoded "3/3 DRY". Live leak detectors, entity list enumerated from
+      # HA on 2026-08-13 rather than pattern-guessed: 12 moisture binary
+      # sensors exist, 6 currently report a real state (the rest sit
+      # unknown/unavailable and are excluded rather than counted as dry).
+      - http_request.post:
+          url: "http://${ha_host_ip}:8123/api/template"
+          request_headers:
+            Authorization: !secret ha_token_bearer
+            Content-Type: "application/json"
+          json:
+            template: "{% set w = states.binary_sensor | selectattr('attributes.device_class','defined') | selectattr('attributes.device_class','eq','moisture') | rejectattr('state','in',['unknown','unavailable']) | list %}{% set wet = w | selectattr('state','eq','on') | list | count %}{% if wet > 0 %}{{ wet }} WET{% else %}{{ w | count }}/{{ w | count }} DRY{% endif %}"
+          capture_response: true
+          max_response_buffer_size: 512
+          on_response:
+            - lvgl.label.update: {id: v_sensors, text: !lambda 'return body.c_str();'}
+            - lvgl.label.update: {id: msd_v_sens, text: !lambda 'return body.c_str();'}
+            - if:
+                condition:
+                  lambda: 'return body.find("WET") != std::string::npos;'
+                then:
+                  - lvgl.led.update: {id: d_sensors, color: "${c_red}"}
+                  - globals.set: {id: g_flash_sens, value: 'true'}
+                else:
+                  - lvgl.led.update: {id: d_sensors, color: "${c_green}"}
+                  - globals.set: {id: g_flash_sens, value: 'false'}
+                  - lvgl.widget.update: {id: msd_core_sens, bg_color: "${c_green}"}
+      # v4.7: Home Assistant's OWN core/OS/supervisor updates - a different
+      # number from the UPDATES tab (which counts every update entity in the
+      # house). All three entity IDs verified present in HA 2026.8.1 on
+      # 2026-08-13 before this was wired.
+      - http_request.post:
+          url: "http://${ha_host_ip}:8123/api/template"
+          request_headers:
+            Authorization: !secret ha_token_bearer
+            Content-Type: "application/json"
+          json:
+            template: "{{ [states('update.home_assistant_core_update'), states('update.home_assistant_operating_system_update'), states('update.home_assistant_supervisor_update')] | select('eq','on') | list | count }}"
+          capture_response: true
+          max_response_buffer_size: 128
+          on_response:
+            - if:
+                condition:
+                  lambda: 'return atoi(body.c_str()) > 0;'
+                then:
+                  - lvgl.label.update:
+                      id: msd_v_core
+                      text: !lambda 'static std::string r; r = body + " PENDING"; return r.c_str();'
+                  - globals.set: {id: g_flash_core, value: 'true'}
+                else:
+                  - lvgl.label.update: {id: msd_v_core, text: "CORE OK"}
+                  - globals.set: {id: g_flash_core, value: 'false'}
+                  - lvgl.widget.update: {id: msd_core_ha, bg_color: "${c_green}"}
+
+  # v3.11: compose the header weather label from HA's temp + condition.
+  # Condition strings arrive as HA slugs (partlycloudy, clear-night) -
+  # normalized to spaced uppercase for the terminal look.
+  - id: update_wx_line
+    then:
+      - lvgl.label.update:
+          id: wx_icon
+          text: !lambda |-
+            std::string c = id(wx_state).state;
+            if (c == "sunny") return "\U000F0599";
+            if (c == "clear-night") return "\U000F0594";
+            if (c == "partlycloudy") return "\U000F0595";
+            if (c == "cloudy") return "\U000F0590";
+            if (c == "rainy") return "\U000F0597";
+            if (c == "pouring") return "\U000F0596";
+            if (c == "lightning") return "\U000F0593";
+            if (c == "lightning-rainy") return "\U000F067E";
+            if (c == "snowy") return "\U000F0598";
+            if (c == "snowy-rainy") return "\U000F067F";
+            if (c == "fog") return "\U000F0591";
+            if (c == "windy" || c == "windy-variant") return "\U000F059D";
+            if (c == "hail") return "\U000F0592";
+            return "\U000F0590";
+      - lvgl.label.update:
+          id: wx_line
+          text: !lambda |-
+            static std::string r;
+            std::string cond = id(wx_state).state;
+            for (auto &c : cond) { if (c=='-'||c=='_') c=' '; c = toupper(c); }
+            if (cond.rfind("PARTLYCLOUDY",0)==0) cond = "PARTLY CLOUDY";
+            char buf[40];
+            if (!isnan(id(wx_temp).state)) {
+              snprintf(buf, sizeof(buf), "%.0f°F %s", id(wx_temp).state, cond.c_str());
+            } else {
+              snprintf(buf, sizeof(buf), "%s", cond.c_str());
+            }
+            r = buf;
+            return r.c_str();
+  - id: go_home
+    then:
+      - lvgl.widget.update: {id: bar_v, bg_color: "${c_home}"}
+      - lvgl.widget.update: {id: bar_h, bg_color: "${c_home}"}
+      - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${c_home}"}
+      - lvgl.widget.update: {id: band_frame, bg_color: "${c_home}"}
+      - lvgl.widget.update: {id: band_window, bg_color: "${c_home}"}
+      - lvgl.widget.update: {id: btn_mv, bg_color: "${c_home}"}
+      - lvgl.widget.update: {id: view_frame, border_color: "${c_home}"}
+      - lvgl.label.update: {id: status_msg, text: "MAIN VIEWER RESTORED"}
+      - lvgl.label.update: {id: viewer_placeholder, text: ""}
+      - lvgl.widget.hide: viewer_cam_widget
+      - globals.set: {id: g_snap_time, value: '0'}
+      - lvgl.widget.hide: age_ring
+      - lvgl.widget.hide: age_text
+      - lvgl.widget.hide: age_caption
+      - script.execute: viewer_gauges_hide
+      - script.execute: msd_show
+      - globals.set: {id: g_view_home, value: 'true'}
+  - id: enter_timeout
+    then:
+      # Todd-approved rec #2: MSD screensaver + backlight dim after 5 min idle
+      - lambda: |-
+          id(g_brt_saved) = id(backlight).current_values.get_brightness();
+          id(g_dimmed) = true;
+      - lvgl.widget.hide: viewer_cam_widget
+      - globals.set: {id: g_snap_time, value: '0'}
+      - lvgl.widget.hide: age_ring
+      - lvgl.widget.hide: age_text
+      - lvgl.widget.hide: age_caption
+      - lvgl.label.update: {id: viewer_placeholder, text: ""}
+      - script.execute: viewer_gauges_hide
+      - script.execute: msd_show
+      - light.turn_on:
+          id: backlight
+          brightness: 30%
+      - lvgl.label.update: {id: status_msg, text: "STANDBY - MASTER SYSTEMS DISPLAY"}
+  # v4.8 (Todd 2026-08-13): five minutes after the dim, everything except
+  # the ship art hides. Backlight is NOT touched - he asked for the
+  # schematic to stay "at the same dimness", so this is purely a
+  # widget-visibility state, and any touch restores it.
+  - id: enter_deep_idle
+    then:
+      - lambda: 'id(g_deep) = true;'
+      - script.execute: msd_hide
+      - lvgl.widget.show: msd_view
+      - lvgl.widget.update: {id: view_frame, border_color: 0x000000}
+      - lvgl.widget.hide: hdr_bar
+      - lvgl.widget.hide: bar_v
+      - lvgl.widget.hide: bar_h
+      - lvgl.widget.hide: band_frame
+      - lvgl.widget.hide: band_window
+      - lvgl.widget.hide: bar_corner_fill
+      - lvgl.widget.hide: status_msg
+      - lvgl.widget.hide: btn_mv
+      - lvgl.widget.hide: btn_ha_updates
+      - lvgl.widget.hide: btn_notifications
+      - lvgl.widget.hide: comms_btn
+      - lvgl.widget.hide: btn_porch
+      - lvgl.widget.hide: btn_bay
+      - lvgl.widget.hide: tab_sensors
+      - lvgl.widget.hide: tab_batt
+      - lvgl.widget.hide: tab_updates
+      - lvgl.widget.hide: tab_energy
+      - lvgl.widget.hide: tab_devices
+      - lvgl.widget.hide: tab_lights
+  - id: leave_deep_idle
+    then:
+      - lambda: 'id(g_deep) = false;'
+      - lvgl.widget.show: hdr_bar
+      - lvgl.widget.show: bar_v
+      - lvgl.widget.show: bar_h
+      - lvgl.widget.show: band_frame
+      - lvgl.widget.show: band_window
+      - lvgl.widget.show: bar_corner_fill
+      - lvgl.widget.show: status_msg
+      - lvgl.widget.show: btn_mv
+      - lvgl.widget.show: btn_ha_updates
+      - lvgl.widget.show: btn_notifications
+      - lvgl.widget.show: comms_btn
+      - lvgl.widget.show: btn_porch
+      - lvgl.widget.show: btn_bay
+      - lvgl.widget.show: tab_sensors
+      - lvgl.widget.show: tab_batt
+      - lvgl.widget.show: tab_updates
+      - lvgl.widget.show: tab_energy
+      - lvgl.widget.show: tab_devices
+      - lvgl.widget.show: tab_lights
+      - lvgl.widget.hide: badge_ntf
+      - lvgl.widget.update: {id: view_frame, border_color: "${c_home}"}
+      - script.execute: msd_show
+      - script.execute: fetch_summaries
+  - id: wake_from_timeout
+    then:
+      - lambda: 'id(g_dimmed) = false;'
+      - if:
+          condition:
+            lambda: 'return id(g_deep);'
+          then:
+            - script.execute: leave_deep_idle
+      - light.turn_on:
+          id: backlight
+          brightness: !lambda 'return id(g_brt_saved);'
+      - lvgl.label.update: {id: status_msg, text: "ALL SYSTEMS ONLINE"}
+  # v4.6: one call shows/hides the whole MSD status board
+  - id: msd_show
+    then:
+      - lvgl.widget.show: msd_view
+      - lvgl.widget.show: msd_title
+      - lvgl.widget.show: msd_line_batt
+      - lvgl.widget.show: msd_line_energy_a
+      - lvgl.widget.show: msd_line_energy_b
+      - lvgl.widget.show: msd_line_energy_c
+      - lvgl.widget.show: msd_line_upd
+      - lvgl.widget.show: msd_line_sens
+      - lvgl.widget.show: msd_line_core
+      - lvgl.widget.show: msd_line_ntf
+      - lvgl.widget.show: msd_bar_batt
+      - lvgl.widget.show: msd_v_batt
+      - lvgl.widget.show: msd_bar_energy
+      - lvgl.widget.show: msd_v_energy
+      - lvgl.widget.show: msd_bar_upd
+      - lvgl.widget.show: msd_v_upd
+      - lvgl.widget.show: msd_bar_sens
+      - lvgl.widget.show: msd_v_sens
+      - lvgl.widget.show: msd_bar_core
+      - lvgl.widget.show: msd_v_core
+      - lvgl.widget.show: msd_bar_ntf
+      - lvgl.widget.show: msd_v_ntf
+      - lvgl.widget.show: msd_node_batt
+      - lvgl.widget.show: msd_node_energy
+      - lvgl.widget.show: msd_node_upd
+      - lvgl.widget.show: msd_node_sens
+      - lvgl.widget.show: msd_node_ha
+  - id: msd_hide
+    then:
+      - lvgl.widget.hide: msd_view
+      - lvgl.widget.hide: msd_title
+      - lvgl.widget.hide: msd_line_batt
+      - lvgl.widget.hide: msd_line_energy_a
+      - lvgl.widget.hide: msd_line_energy_b
+      - lvgl.widget.hide: msd_line_energy_c
+      - lvgl.widget.hide: msd_line_upd
+      - lvgl.widget.hide: msd_line_sens
+      - lvgl.widget.hide: msd_line_core
+      - lvgl.widget.hide: msd_line_ntf
+      - lvgl.widget.hide: msd_bar_batt
+      - lvgl.widget.hide: msd_v_batt
+      - lvgl.widget.hide: msd_bar_energy
+      - lvgl.widget.hide: msd_v_energy
+      - lvgl.widget.hide: msd_bar_upd
+      - lvgl.widget.hide: msd_v_upd
+      - lvgl.widget.hide: msd_bar_sens
+      - lvgl.widget.hide: msd_v_sens
+      - lvgl.widget.hide: msd_bar_core
+      - lvgl.widget.hide: msd_v_core
+      - lvgl.widget.hide: msd_bar_ntf
+      - lvgl.widget.hide: msd_v_ntf
+      - lvgl.widget.hide: msd_node_batt
+      - lvgl.widget.hide: msd_node_energy
+      - lvgl.widget.hide: msd_node_upd
+      - lvgl.widget.hide: msd_node_sens
+      - lvgl.widget.hide: msd_node_ha
+  # v5.6: one call hides every viewer gauge widget
+  - id: viewer_gauges_hide
+    then:
+      - lvgl.widget.hide: nrg_arc
+      - lvgl.widget.hide: nrg_val
+      - lvgl.widget.hide: nrg_cap
+      - lvgl.widget.hide: nrg_list
+      - lvgl.widget.hide: env_arc_hot
+      - lvgl.widget.hide: env_arc_cold
+      - lvgl.widget.hide: env_val
+      - lvgl.widget.hide: env_cap
+      - lvgl.widget.hide: env_list
+      - lvgl.widget.hide: nrg_row_0
+      - lvgl.widget.hide: nrg_row_1
+      - lvgl.widget.hide: nrg_row_2
+      - lvgl.widget.hide: nrg_row_3
+      - lvgl.widget.hide: nrg_row_4
+  - id: viewer_reset_timer
+    mode: restart
+    then:
+      - delay: 12s
+      - lvgl.label.update: {id: viewer_placeholder, text: ""}
+      - script.execute: viewer_gauges_hide
+      - script.execute: msd_show
+  - id: va_ui_watchdog
+    mode: restart
+    then:
+      - delay: 25s
+      - if:
+          condition:
+            voice_assistant.is_running:
+          then:
+            - voice_assistant.stop:
+      - lvgl.widget.update: {id: comms_btn, bg_color: "${c_comms}"}
+      - lvgl.label.update: {id: comms_state, text: "TAP TO SPEAK"}
+      - lvgl.label.update: {id: status_msg, text: "INTERFACE ENGINE READY"}
+  - id: slider_hide_timer
+    mode: restart
+    then:
+      - delay: 10s
+      - lvgl.widget.hide: slider_vol
+      - lvgl.widget.hide: slider_brt
+      - lvgl.label.update: {id: status_msg, text: "SYSTEM READY"}
+
+
+lvgl:
+  rotation: 90
+  displays:
+    - display1
+  touchscreens:
+    - touch1
+  on_idle:
+    - timeout: 120s
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(g_view_home);'
+            then:
+              - lvgl.label.update: {id: status_msg, text: "VIEW IDLE - RETURNING TO MAIN VIEWER"}
+    - timeout: 240s
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(g_view_home);'
+            then:
+              - lvgl.label.update: {id: status_msg, text: "VIEW IDLE - RETURNING TO MAIN VIEWER"}
+    - timeout: 300s
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(g_view_home);'
+            then:
+              - script.execute: go_home
+        - script.execute: enter_timeout
+    # v4.8: +5 min -> schematic only, nothing else on the glass.
+    - timeout: 600s
+      then:
+        - script.execute: enter_deep_idle
+  pages:
+    - id: main_page
+      bg_color: 0x000000
+      scrollable: false
+      pad_all: 0
+      widgets:
+
+        # ================= HEADER (bigger per Todd 2026-08-10) =================
+        - obj:
+            id: hdr_bar
+            x: 0
+            y: 0
+            width: 1280
+            height: 60
+            bg_color: 0x000000
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            widgets:
+              - label:
+                  id: status_line
+                  x: 68
+                  y: 14
+                  width: 272
+                  text_align: CENTER
+                  text_font: montserrat_bold_28
+                  text_color: ${c_home}
+                  text: "syncing"
+              # v3.11 header regroup (Todd live, 2026-08-10): LEFT side =
+              # human stuff (time, date, weather), RIGHT side = technical
+              # (version, IP, SSID, icons). Date matches the clock's font and
+              # color, no leading zeros. Weather is live from HA.
+              - label:
+                  id: date_line
+                  x: 280
+                  y: 14
+                  width: 190
+                  text_align: CENTER
+                  text_font: montserrat_bold_28
+                  text_color: ${c_home}
+                  text: "--/--/----"
+              - label:
+                  id: wx_icon
+                  x: 478
+                  y: 16
+                  text: ""
+                  text_font: mdi_icons_20
+                  text_color: ${c_home}
+              - label:
+                  id: wx_line
+                  x: 506
+                  y: 18
+                  width: 274
+                  text_align: LEFT
+                  text_font: montserrat_bold_20
+                  text_color: ${c_home}
+                  text: "--"
+              # v4.7 (Todd 2026-08-13 nitpick): the version / IP / SSID group
+              # was dim grey-violet. Same size, same face, but now in the
+              # header's own home blue like the clock, date and weather - he
+              # wanted this group to read as part of the header, not as
+              # afterthought text.
+              - label:
+                  id: hdr_version
+                  x: 720
+                  y: 20
+                  width: 280
+                  text_align: RIGHT
+                  text_font: montserrat_bold_20
+                  text_color: ${c_home}
+                  text: "${config_name}"
+              - label:
+                  id: ip_line
+                  x: 1014
+                  y: 22
+                  width: 70
+                  text_align: CENTER
+                  text_font: montserrat_bold_16
+                  text_color: ${c_home}
+                  text: "IP .39"
+              - label:
+                  id: ssid_line
+                  x: 1092
+                  y: 22
+                  width: 64
+                  text_align: CENTER
+                  text_font: montserrat_bold_16
+                  text_color: ${c_home}
+                  text: "ALPHA"
+              - label:
+                  id: wifi_status_icon
+                  x: 1166
+                  y: 12
+                  text: ""
+                  text_font: montserrat_32
+                  text_color: ${c_green}
+              - label:
+                  id: batt_icon
+                  x: 1222
+                  y: 12
+                  text: ""
+                  text_font: montserrat_32
+                  text_color: ${c_green}
+              - button:
+                  id: gear_btn
+                  x: 20
+                  y: 6
+                  width: 48
+                  height: 48
+                  radius: 12
+                  bg_color: ${c_amber}
+                  shadow_width: 8
+                  shadow_offset_x: 2
+                  shadow_offset_y: 3
+                  shadow_color: 0x000000
+                  shadow_opa: 60%
+                  pressed:
+                    shadow_width: 0
+                    translate_x: 2
+                    translate_y: 3
+                  on_click:
+                    - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+                    - lvgl.widget.show: slider_vol
+                    - lvgl.widget.show: slider_brt
+                    - script.execute: slider_hide_timer
+                    - lvgl.label.update:
+                        id: status_msg
+                        text: "TOP = VOLUME - BOTTOM = BRIGHTNESS - RELEASE TO APPLY"
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: ""
+                        text_font: montserrat_24
+                        text_color: 0x000000
+
+        # ================= CONTIGUOUS ELBOW BAR =================
+        - obj:
+            id: bar_v
+            x: 20
+            y: 70
+            width: 82
+            height: 646
+            radius: 24
+            bg_color: ${c_home}
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+        - obj:
+            id: bar_h
+            x: 20
+            y: 70
+            width: 436
+            height: 46
+            radius: 20
+            bg_color: ${c_home}
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+        # v3.11: ticks re-centered so the HOME gap sits exactly over the
+        # COMMUNICATIONS button (comms center x=845; gap 698..992, mid 845)
+        - obj:
+            id: band_frame
+            x: 468
+            y: 70
+            width: 722
+            height: 46
+            radius: 23
+            bg_color: ${c_home}
+            border_width: 0
+        - obj:
+            id: band_window
+            x: 478
+            y: 77
+            width: 702
+            height: 32
+            radius: 16
+            # v4.6: boots in home color; recolors follow the active section
+            bg_color: ${c_home}
+            border_width: 0
+        - obj:
+            id: bar_corner_fill
+            x: 102
+            y: 116
+            width: 36
+            height: 36
+            radius: 0
+            bg_color: ${c_home}
+            border_width: 0
+        - obj:
+            x: 102
+            y: 116
+            width: 72
+            height: 72
+            radius: 36
+            bg_color: 0x000000
+            border_width: 0
+        # v3.20: the band window IS the status line now (Todd 2026-08-10) -
+        # status_msg lives here, chip-sized like NOTIFICATIONS; the viewer
+        # carries only clock + response text. Section identity = band color.
+        - label:
+            id: status_msg
+            x: 494
+            y: 82
+            width: 670
+            text_align: CENTER
+            long_mode: SCROLL
+            text: "ALL SYSTEMS ONLINE"
+            # v5.4 (Todd): biggest face that fits the 32px band window.
+            # long_mode SCROLL stays - long messages scroll horizontally.
+            text_font: montserrat_bold_20
+            text_color: 0x000000
+
+        # v4.4 Stage B: snapshot-age ring at the right end of the band.
+        # Native LVGL arc - rim sweeps 0-60s, then holds full and goes amber.
+        # Black bezel keeps it readable on every section color.
+        # v5.4 (Todd): snapshot-age timer lives in the black gap between
+        # HA NOTIFICATIONS and CAM 1. No well - invisible until a
+        # snapshot is on the viewer, then ring + digits light up.
+        - arc:
+            id: age_ring
+            hidden: true
+            x: 428
+            y: 133
+            width: 56
+            height: 56
+            min_value: 0
+            max_value: 60
+            value: 0
+            arc_width: 6
+            adjustable: false
+            arc_color: 0x10231A
+            indicator:
+              arc_color: ${c_green}
+              arc_width: 6
+            knob:
+              bg_opa: TRANSP
+        - label:
+            id: age_text
+            hidden: true
+            x: 486
+            y: 146
+            width: 62
+            text_align: CENTER
+            text: ""
+            text_font: montserrat_bold_20
+            text_color: ${c_green}
+        - label:
+            id: age_caption
+            hidden: true
+            x: 486
+            y: 170
+            width: 62
+            text_align: CENTER
+            text: "SNAP\nAGE"
+            text_font: montserrat_bold_12
+            text_color: ${c_dim}
+
+        # ================= LEFT TAB STACK (7 two-row tabs) =================
+        # v3.19: MAIN VIEWER band button REMOVED (Todd 2026-08-10) - the big MV
+        # button on the elbow corner is THE viewer/home control now. Band runs
+        # unbroken to the NOTIFICATIONS separator. Panel black separators
+        # segment every element on the band.
+        - button:
+            id: btn_mv
+            x: 20
+            y: 70
+            width: 120
+            height: 130
+            radius: 24
+            bg_color: ${c_home}
+            border_width: 4
+            border_color: ${c_paper}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - script.execute: go_home
+            widgets:
+              - label:
+                  x: 0
+                  y: 12
+                  width: 112
+                  text_align: CENTER
+                  text: "MV"
+                  text_font: montserrat_bold_20
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 46
+                  width: 112
+                  text_align: CENTER
+                  text: "\U000F0502"
+                  text_font: mdi_icons_48
+                  text_color: 0x000000
+        # v4.7 tab order (Todd 2026-08-13): CRITICAL SENSORS takes the top
+        # slot - it is the only tab whose state can mean "something is wrong
+        # right now", so it earns first read. DEVICE STATUS and UPDATES lost
+        # their state dots entirely: Todd's call was that neither one changes
+        # what the house is actually doing ("they really don't impact the
+        # operation of the ship"), so a live alarm dot overstated them. Their
+        # numbers still read live in the value line.
+        - button:
+            id: tab_batt
+            x: 52
+            y: 292
+            width: 360
+            height: 78
+            radius: 31
+            bg_color: ${c_batt}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.widget.update: {id: bar_v, bg_color: "${c_batt}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${c_batt}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${c_batt}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${c_batt}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${c_batt}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${c_batt}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${c_batt}"}
+              - lvgl.label.update: {id: status_msg, text: "DISPLAYING DEVICE STATUS"}
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update:
+                  id: viewer_placeholder
+                  text: "DEVICE STATUS VIEW\nCHOOSE THE FLEET DETAILS\nTO EXPOSE HERE"
+              - script.execute: viewer_reset_timer
+              - globals.set: {id: g_view_home, value: 'false'}
+            widgets:
+              - label:
+                  x: 24
+                  y: 26
+                  text: "\uF242"
+                  text_font: montserrat_24
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 10
+                  width: 360
+                  text_align: CENTER
+                  long_mode: SCROLL
+                  text: "DEVICE STATUS"
+                  text_font: montserrat_bold_20
+                  text_color: 0x000000
+              - label:
+                  id: v_batt
+                  x: 0
+                  y: 44
+                  width: 360
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+        - button:
+            id: tab_updates
+            x: 52
+            y: 377
+            width: 360
+            height: 78
+            radius: 31
+            bg_color: ${t_updates}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.widget.update: {id: bar_v, bg_color: "${t_updates}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${t_updates}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${t_updates}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${t_updates}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${t_updates}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${t_updates}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${t_updates}"}
+              - lvgl.label.update: {id: status_msg, text: "DISPLAYING UPDATES"}
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update:
+                  id: viewer_placeholder
+                  text: "UPDATES VIEW\nCHOOSE THE UPDATE DETAILS\nTO EXPOSE HERE"
+              - script.execute: viewer_reset_timer
+              - globals.set: {id: g_view_home, value: 'false'}
+            widgets:
+              - label:
+                  x: 24
+                  y: 26
+                  text: "\uF019"
+                  text_font: montserrat_24
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 10
+                  width: 360
+                  text_align: CENTER
+                  long_mode: SCROLL
+                  text: "UPDATES"
+                  text_font: montserrat_bold_20
+                  text_color: 0x000000
+              - label:
+                  id: v_updates
+                  x: 0
+                  y: 44
+                  width: 360
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+        - button:
+            id: tab_lights
+            # v4.4 tab order (Todd 2026-08-13): the three tabs that carry a
+            # state dot sit together at the top (DEVICE STATUS, UPDATES,
+            # CRITICAL SENSORS), then ENERGY, DEVICES DISCOVERED, LIGHTS.
+            x: 52
+            y: 632
+            width: 360
+            height: 78
+            radius: 31
+            bg_color: ${c_lights}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.widget.update: {id: bar_v, bg_color: "${c_lights}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${c_lights}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${c_lights}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${c_lights}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${c_lights}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${c_lights}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${c_lights}"}
+              - lvgl.label.update: {id: status_msg, text: "ENVIRONMENT - FETCHING"}
+              - globals.set: {id: g_view_home, value: 'false'}
+              # v5.6: dual-ring climate dial, native LVGL - outer ring =
+              # warmest room, inner = coolest, room list beside. The gauge
+              # widgets are hidden-until-used (the invisible-timer principle).
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update: {id: viewer_placeholder, text: ""}
+              - http_request.post:
+                  url: "http://${ha_host_ip}:8123/api/template"
+                  request_headers:
+                    Authorization: !secret ha_token_bearer
+                    Content-Type: "application/json"
+                  json:
+                    template: "{% set t = ['sensor.family_room_broadlink_remote_temperature','sensor.master_echo_temperature_2','sensor.smartthings_motion_sensor_temperature','sensor.3rd_bay_bluecharm_bc021pro_temperature'] | map('states') | select('ne','unknown') | select('ne','unavailable') | map('float') | list %}{{ t | min | round(1) }}|{{ t | max | round(1) }}"
+                  capture_response: true
+                  max_response_buffer_size: 128
+                  on_response:
+                    - lambda: |-
+                        float lo = 0, hi = 0;
+                        if (sscanf(body.c_str(), "%f|%f", &lo, &hi) == 2) {
+                          lv_arc_set_value(id(env_arc_cold), (int) lo);
+                          lv_arc_set_value(id(env_arc_hot), (int) hi);
+                          char b[32];
+                          snprintf(b, sizeof(b), "%.0f\u00B0-%.0f\u00B0F", lo, hi);
+                          lv_label_set_text(id(env_val), b);
+                        }
+              - http_request.post:
+                  url: "http://${ha_host_ip}:8123/api/template"
+                  request_headers:
+                    Authorization: !secret ha_token_bearer
+                    Content-Type: "application/json"
+                  json:
+                    template: "FAMILY RM - {{ states('sensor.family_room_broadlink_remote_temperature') | float(0) | round(1) }}\u00B0\nMASTER - {{ states('sensor.master_echo_temperature_2') | float(0) | round(1) }}\u00B0\nMOTION - {{ states('sensor.smartthings_motion_sensor_temperature') | float(0) | round(1) }}\u00B0\n3RD BAY - {{ states('sensor.3rd_bay_bluecharm_bc021pro_temperature') | float(0) | round(1) }}\u00B0"
+                  capture_response: true
+                  max_response_buffer_size: 512
+                  on_response:
+                    - lvgl.label.update:
+                        id: env_list
+                        text: !lambda 'static std::string r; r = body; return r.c_str();'
+                    - lvgl.widget.show: env_arc_hot
+                    - lvgl.widget.show: env_arc_cold
+                    - lvgl.widget.show: env_val
+                    - lvgl.widget.show: env_cap
+                    - lvgl.widget.show: env_list
+                    - lvgl.label.update: {id: status_msg, text: "INDOOR ENVIRONMENT - MAIN VIEWER"}
+                    - script.execute: viewer_reset_timer
+            widgets:
+              - label:
+                  x: 24
+                  y: 26
+                  text: "\U000F050F"
+                  text_font: mdi_icons_26
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 10
+                  width: 360
+                  text_align: CENTER
+                  long_mode: SCROLL
+                  text: "ENVIRONMENT"
+                  text_font: montserrat_bold_20
+                  text_color: 0x000000
+              - label:
+                  id: v_lights
+                  x: 0
+                  y: 44
+                  width: 360
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+        - button:
+            id: tab_devices
+            x: 52
+            y: 547
+            width: 360
+            height: 78
+            radius: 31
+            bg_color: ${c_devices}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.widget.update: {id: bar_v, bg_color: "${c_devices}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${c_devices}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${c_devices}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${c_devices}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${c_devices}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${c_devices}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${c_devices}"}
+              - lvgl.label.update: {id: status_msg, text: "FRIGATE NVR - * MARKS DATA THAT ARRIVES WITH THE HA DASHBOARD STAGE"}
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update:
+                  id: viewer_placeholder
+                  text: "FRIGATE VIEW\nCHOOSE THE NVR DETAILS\nTO EXPOSE HERE *"
+              - script.execute: viewer_reset_timer
+              - globals.set: {id: g_view_home, value: 'false'}
+            widgets:
+              - label:
+                  x: 24
+                  y: 26
+                  text: "\U000F07AE"
+                  text_font: mdi_icons_26
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 10
+                  width: 360
+                  text_align: CENTER
+                  long_mode: SCROLL
+                  text: "FRIGATE *"
+                  text_font: montserrat_bold_20
+                  text_color: 0x000000
+              - label:
+                  id: v_devices
+                  x: 0
+                  y: 44
+                  width: 360
+                  text_align: CENTER
+                  text: "RECENT EVENTS *"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+        - button:
+            id: tab_energy
+            x: 52
+            y: 462
+            width: 360
+            height: 78
+            radius: 31
+            bg_color: ${t_energy}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.widget.update: {id: bar_v, bg_color: "${t_energy}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${t_energy}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${t_energy}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${t_energy}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${t_energy}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${t_energy}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${t_energy}"}
+              - lvgl.label.update: {id: status_msg, text: "DISPLAYING ENERGY"}
+              # v5.5: second wired tab - live top-5 power draws in the
+              # viewer. Template tested against HA before wiring
+              # (returned the TV at #1 with 281 W).
+              - script.execute: msd_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update: {id: status_msg, text: "HOUSE LOAD - FETCHING"}
+              - script.execute: viewer_gauges_hide
+              - lvgl.label.update: {id: viewer_placeholder, text: ""}
+              - http_request.post:
+                  url: "http://${ha_host_ip}:8123/api/template"
+                  request_headers:
+                    Authorization: !secret ha_token_bearer
+                    Content-Type: "application/json"
+                  json:
+                    template: "{% set ids = ['sensor.attic2_kasa_current_consumption','sensor.hair_dryer_kasa_current_consumption','sensor.master_kasa_current_consumption','sensor.master_kasa2_current_consumption','sensor.cave_kasa_current_consumption','sensor.credenza_kasa_current_consumption','sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power','sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power','sensor.office_main_mss2_power','sensor.shelly_zwave_plug3z_electric_consumption_w','sensor.office_zwave_plug1_electric_consumption_w','sensor.kitchen_zwave_plug4_electric_consumption_w','sensor.attic_zwave_plug3_electric_consumption_w','sensor.mss2_power','sensor.master_bedroom_mastershellyplug1_power','sensor.office_officeshellyplug2_power'] %}{{ ids | map('states') | select('ne','unknown') | select('ne','unavailable') | map('float',0) | sum | round(1) }}"
+                  capture_response: true
+                  max_response_buffer_size: 128
+                  on_response:
+                    - lambda: |-
+                        float w = atof(body.c_str());
+                        int v = (int) w; if (v > 2000) v = 2000;
+                        lv_arc_set_value(id(nrg_arc), v);
+                        lv_obj_set_style_arc_color(id(nrg_arc),
+                          lv_color_hex(w >= 1000.0f ? 0xCC6666 :
+                                       (w >= 500.0f ? 0xF2D45C : 0x66CC99)),
+                          LV_PART_INDICATOR);
+                        char b[16];
+                        snprintf(b, sizeof(b), "%d", (int) w);
+                        lv_label_set_text(id(nrg_val), b);
+              - http_request.post:
+                  url: "http://${ha_host_ip}:8123/api/template"
+                  request_headers:
+                    Authorization: !secret ha_token_bearer
+                    Content-Type: "application/json"
+                  json:
+                    template: "{% set ids = [\"sensor.attic2_kasa_current_consumption\",\"sensor.hair_dryer_kasa_current_consumption\",\"sensor.master_kasa_current_consumption\",\"sensor.master_kasa2_current_consumption\",\"sensor.cave_kasa_current_consumption\",\"sensor.credenza_kasa_current_consumption\",\"sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power\",\"sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power\",\"sensor.office_main_mss2_power\",\"sensor.shelly_zwave_plug3z_electric_consumption_w\",\"sensor.office_zwave_plug1_electric_consumption_w\",\"sensor.kitchen_zwave_plug4_electric_consumption_w\",\"sensor.attic_zwave_plug3_electric_consumption_w\",\"sensor.mss2_power\",\"sensor.master_bedroom_mastershellyplug1_power\",\"sensor.office_officeshellyplug2_power\"] %}{% set ns = namespace(rows=[]) %}{% for i in ids %}{% set v = states(i) %}{% if v not in [\"unknown\",\"unavailable\"] %}{% set ns.rows = ns.rows + [[state_attr(i,\"friendly_name\") or i, v | float(0)]] %}{% endif %}{% endfor %}{% for r in ns.rows | sort(attribute=\"1\", reverse=true) %}{% if loop.index <= 5 %}{{ r[0] | upper | replace(\" POWER\",\"\") | replace(\" CURRENT CONSUMPTION\",\"\") | replace(\" KASA\",\"\") | truncate(20, true, \"\") }} - {{ r[1] | round(0) | int }} W{% if not loop.last and loop.index < 5 %}\\n{% endif %}{% endif %}{% endfor %}"
+                  capture_response: true
+                  max_response_buffer_size: 1024
+                  on_response:
+                    - lvgl.label.update:
+                        id: nrg_list
+                        text: !lambda 'static std::string r; r = body; return r.c_str();'
+                    - lvgl.widget.show: nrg_arc
+                    - lvgl.widget.show: nrg_val
+                    - lvgl.widget.show: nrg_cap
+                    - lvgl.widget.show: nrg_list
+                    - lvgl.widget.show: nrg_row_0
+                    - lvgl.widget.show: nrg_row_1
+                    - lvgl.widget.show: nrg_row_2
+                    - lvgl.widget.show: nrg_row_3
+                    - lvgl.widget.show: nrg_row_4
+                    - lvgl.label.update: {id: status_msg, text: "HOUSE LOAD - MAIN VIEWER"}
+                    - script.execute: viewer_reset_timer
+              - globals.set: {id: g_view_home, value: 'false'}
+            widgets:
+              - label:
+                  x: 24
+                  y: 26
+                  text: "\uF0E7"
+                  text_font: montserrat_24
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 10
+                  width: 360
+                  text_align: CENTER
+                  long_mode: SCROLL
+                  text: "ENERGY *"
+                  text_font: montserrat_bold_20
+                  text_color: 0x000000
+              - label:
+                  id: v_energy
+                  x: 0
+                  y: 44
+                  width: 360
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+        - button:
+            id: tab_sensors
+            x: 52
+            y: 207
+            width: 360
+            height: 78
+            radius: 31
+            bg_color: ${c_sensors}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.widget.update: {id: bar_v, bg_color: "${c_sensors}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${c_sensors}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${c_sensors}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${c_sensors}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${c_sensors}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${c_sensors}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${c_sensors}"}
+              - lvgl.label.update: {id: status_msg, text: "CRITICAL SENSORS - LIVE LEAK DETECTORS"}
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update:
+                  id: viewer_placeholder
+                  text: "CRITICAL SENSORS VIEW\nLEAK GAUGES ARRIVE\nWITH THE GAUGE STAGE"
+              - script.execute: viewer_reset_timer
+              - globals.set: {id: g_view_home, value: 'false'}
+            widgets:
+              - obj:
+                  x: 302
+                  y: 16
+                  width: 46
+                  height: 46
+                  radius: 23
+                  bg_color: 0x000000
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+              - led:
+                  id: d_sensors
+                  x: 314
+                  y: 24
+                  width: 30
+                  height: 30
+                  color: ${c_green}
+                  brightness: 100%
+              - label:
+                  x: 24
+                  y: 26
+                  text: "\uF043"
+                  text_font: montserrat_24
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 10
+                  width: 360
+                  text_align: CENTER
+                  long_mode: SCROLL
+                  text: "CRITICAL SENSORS"
+                  text_font: montserrat_bold_20
+                  text_color: 0x000000
+              - label:
+                  id: v_sensors
+                  x: 0
+                  y: 44
+                  width: 360
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+
+        # ===== COMMAND ROW: notifications | comms | HA updates =====
+        # v3.11: NOTIFICATIONS + HA UPDATES moved UP onto the blue elbow bar
+        # (Todd's ask, matches the video refinement) - compact pills riding
+        # the bar left and right of the centered HOME gap. Color goes
+        # dynamic (bright orange on pending) in the data-wiring stage.
+        - button:
+            id: comms_btn
+            x: 695
+            y: 128
+            width: 300
+            height: 72
+            radius: 28
+            bg_color: ${c_comms}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - if:
+                  condition:
+                    voice_assistant.is_running:
+                  then:
+                    - lvgl.label.update:
+                        id: status_msg
+                        text: "INTERFACE ENGINE BUSY - STAND BY"
+                  else:
+                    - voice_assistant.start:
+                    - script.execute: va_ui_watchdog
+            widgets:
+              - label:
+                  x: 20
+                  y: 24
+                  text: ""
+                  text_font: montserrat_24
+                  text_color: 0x000000
+              - label:
+                  x: 0
+                  y: 16
+                  width: 300
+                  text_align: CENTER
+                  text: "COMMUNICATIONS"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+              - label:
+                  id: comms_state
+                  x: 0
+                  y: 44
+                  width: 300
+                  text_align: CENTER
+                  text: "TAP TO SPEAK"
+                  text_font: montserrat_12
+                  text_color: 0x000000
+        - button:
+            id: btn_ha_updates
+            x: 159
+            y: 122
+            width: 112
+            height: 78
+            radius: 16
+            # v4.7 (Todd 2026-08-13): both HA buttons now carry Home
+            # Assistant's own brand blue and its logo mark, with the
+            # label text sitting on top of the logo - so the two tiles
+            # that reach into HA are visually branded as HA rather than
+            # being two more amber chips.
+            bg_color: ${c_ha}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.label.update:
+                  id: status_msg
+                  text: "HOME ASSISTANT CORE UPDATES - DETAIL VIEW ARRIVES IN A LATER STAGE"
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update:
+                  id: viewer_placeholder
+                  text: "HA CORE UPDATES VIEW\nCHOOSE THE CORE DETAILS\nTO EXPOSE HERE"
+              - script.execute: viewer_reset_timer
+            widgets:
+              # v4.9: watermark REMOVED - it read fine in the render and
+              # made the label unreadable on the actual panel. The brand
+              # blue carries the association by itself.
+              - label:
+                  x: 0
+                  y: 20
+                  width: 112
+                  text_align: CENTER
+                  text: "CORE\nUPDATES"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+        - button:
+            id: btn_notifications
+            x: 286
+            y: 122
+            width: 112
+            height: 78
+            radius: 16
+            bg_color: ${c_ha}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.label.update:
+                  id: status_msg
+                  text: "HA NOTIFICATIONS - COUNT SENSOR ARRIVES IN THE NEXT WIRING STAGE"
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.widget.hide: viewer_cam_widget
+              - lvgl.label.update:
+                  id: viewer_placeholder
+                  text: "HA NOTIFICATIONS VIEW\nNEEDS THE HA COUNT\nSENSOR FIRST *"
+              - script.execute: viewer_reset_timer
+            widgets:
+              - label:
+                  x: 0
+                  y: 22
+                  width: 112
+                  text_align: CENTER
+                  text: "HA\nNOTIFICATIONS *"
+                  text_font: montserrat_bold_12
+                  text_color: 0x000000
+        # v4.0 phone-style badge counts (hide-at-zero; red at 5+). Drawn after
+        # the buttons so they overlap the top-right corners.
+        - obj:
+            id: badge_upd
+            hidden: true
+            x: 249
+            y: 112
+            width: 28
+            height: 28
+            radius: 14
+            bg_color: ${c_orange}
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            widgets:
+              - label:
+                  id: badge_upd_lbl
+                  align: CENTER
+                  text: "0"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+        - obj:
+            id: badge_ntf
+            hidden: true
+            x: 376
+            y: 112
+            width: 28
+            height: 28
+            radius: 14
+            bg_color: ${c_orange}
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            widgets:
+              - label:
+                  id: badge_ntf_lbl
+                  align: CENTER
+                  text: "0"
+                  text_font: montserrat_bold_16
+                  text_color: 0x000000
+
+        # v3.12: status line lives ABOVE communications now (Todd's spec),
+        # centered on the comms axis, bigger.
+        # ===== BOXED VIEW SCREEN =====
+        - obj:
+            id: view_frame
+            x: 470
+            y: 224
+            width: 720
+            height: 460
+            radius: 12
+            bg_color: 0x020208
+            border_width: 4
+            border_color: ${c_home}
+            pad_all: 0
+            scrollable: false
+            widgets:
+              # v3.15 GOLD: idle/default viewer content - giant glanceable
+              # clock + date (hidden while a voice response is on screen).
+              - label:
+                  id: idle_clock
+                  hidden: true
+                  x: 0
+                  y: 110
+                  width: 712
+                  text_align: CENTER
+                  text: ""
+                  text_font: montserrat_bold_64
+                  text_color: ${c_dim}
+              - label:
+                  id: idle_date
+                  hidden: true
+                  x: 0
+                  y: 195
+                  width: 712
+                  text_align: CENTER
+                  text: ""
+                  text_font: montserrat_bold_24
+                  text_color: ${c_dim}
+              - label:
+                  id: viewer_placeholder
+                  align: CENTER
+                  width: 660
+                  text_align: CENTER
+                  text: ""
+                  text_font: montserrat_bold_40
+                  text_color: ${c_paper}
+              # v3.12: "vortex" activity indicator while the system speaks -
+              # native LVGL spinner, shown on tts start, hidden at stream end.
+              # v4.8 vortex: three rings, three rotation rates. Outer is
+              # slow and thin, inner is fast and heavy - the differing
+              # speeds are what sell the depth, not any 3D shading.
+              - spinner:
+                  id: va_vortex
+                  align: BOTTOM_MID
+                  y: -8
+                  width: 124
+                  height: 124
+                  spin_time: 2.8s
+                  arc_length: 30deg
+                  arc_width: 4
+                  arc_color: 0x101018
+                  indicator:
+                    arc_color: ${c_comms}
+                    arc_width: 4
+                  hidden: true
+              - spinner:
+                  id: va_vortex2
+                  align: BOTTOM_MID
+                  y: -26
+                  width: 88
+                  height: 88
+                  spin_time: 1.5s
+                  arc_length: 75deg
+                  arc_width: 5
+                  arc_color: 0x101018
+                  indicator:
+                    arc_color: ${c_ha}
+                    arc_width: 5
+                  hidden: true
+              - spinner:
+                  id: va_vortex3
+                  align: BOTTOM_MID
+                  y: -44
+                  width: 52
+                  height: 52
+                  spin_time: 0.85s
+                  arc_length: 140deg
+                  arc_width: 6
+                  arc_color: 0x101018
+                  indicator:
+                    arc_color: ${c_amber}
+                    arc_width: 6
+                  hidden: true
+              # CAMERA STAGE 2026-08-13: snapshot lands here, filling the
+              # viewer. Declared BEFORE msd_view so the MSD screensaver still
+              # draws over it during timeout.
+              - image:
+                  id: viewer_cam_widget
+                  hidden: true
+                  align: CENTER
+                  src: viewer_cam_img
+              # v4.1 timeout screen: U.S.S. Durant MSD + glanceable clock
+              # v4.6 (Todd-approved): the MSD status board IS the default
+              # idle view now, not just the timeout screensaver.
+              - image:
+                  id: msd_view
+                  x: 0
+                  y: 0
+                  src: msd_img
+              # v4.7 title (Todd 2026-08-13): left-justified, and the
+              # "- MASTER SYSTEMS DISPLAY" tail dropped. The board IS the
+              # master systems display; saying so cost a third of the
+              # width and told the reader nothing.
+              - label:
+                  id: msd_title
+                  x: 14
+                  y: 8
+                  width: 320
+                  text_align: LEFT
+                  text: "U.S.S. DURANT"
+                  text_font: montserrat_bold_24
+                  text_color: ${c_paper}
+
+              # ===== v4.7 MSD STATUS BOARD =====
+              # Callouts placed by where the system actually lives on the
+              # hull, per Todd's markup: CRIT SENSORS to 2 o'clock on the
+              # saucer, the HA pair to 4 o'clock, UPDATES down low, and
+              # ENERGY between the two nacelles with a feed line from each
+              # ("2 arrows pointing from each nacelle to an energy blob").
+              # Every callout now carries its live value in 16pt under the
+              # name, so the board reads at a glance without crossing back
+              # to the tab stack. Lines are declared before nodes so the
+              # nodes cap their own endpoints.
+              - line:
+                  id: msd_line_batt
+                  points:
+                    - 380, 100
+                    - 380, 128
+                    - 361, 148
+                  line_width: 3
+                  line_color: ${c_batt}
+                  line_rounded: true
+              - line:
+                  id: msd_line_energy_a
+                  points:
+                    - 255, 112
+                    - 180, 232
+                  line_width: 3
+                  line_color: ${t_energy}
+                  line_rounded: true
+              - line:
+                  id: msd_line_energy_c
+                  points:
+                    - 267, 251
+                    - 346, 246
+                  line_width: 3
+                  line_color: ${t_energy}
+                  line_rounded: true
+              - line:
+                  id: msd_line_energy_b
+                  points:
+                    - 255, 388
+                    - 250, 266
+                  line_width: 3
+                  line_color: ${t_energy}
+                  line_rounded: true
+              - line:
+                  id: msd_line_upd
+                  points:
+                    - 400, 384
+                    - 400, 395
+                  line_width: 3
+                  line_color: ${t_updates}
+                  line_rounded: true
+              - line:
+                  id: msd_line_sens
+                  points:
+                    - 619, 106
+                    - 619, 133
+                  line_width: 3
+                  line_color: ${c_sensors}
+                  line_rounded: true
+              - line:
+                  id: msd_line_core
+                  points:
+                    - 610, 330
+                    - 560, 296
+                    - 508, 248
+                  line_width: 3
+                  line_color: ${c_ha}
+                  line_rounded: true
+              - line:
+                  id: msd_line_ntf
+                  points:
+                    - 534, 403
+                    - 496, 386
+                    - 492, 257
+                  line_width: 3
+                  line_color: ${c_ha}
+                  line_rounded: true
+              - obj:
+                  id: msd_bar_batt
+                  x: 310
+                  y: 44
+                  width: 170
+                  height: 30
+                  radius: 15
+                  bg_color: ${c_batt}
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "DEVICE STATUS"
+                        text_font: montserrat_bold_16
+                        text_color: 0x000000
+              - label:
+                  id: msd_v_batt
+                  x: 310
+                  y: 76
+                  width: 170
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: ${c_batt}
+              - obj:
+                  id: msd_bar_energy
+                  x: 97
+                  y: 236
+                  width: 170
+                  height: 30
+                  radius: 15
+                  bg_color: ${t_energy}
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "ENERGY"
+                        text_font: montserrat_bold_16
+                        text_color: 0x000000
+              - label:
+                  id: msd_v_energy
+                  x: 97
+                  y: 268
+                  width: 170
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: ${t_energy}
+              - obj:
+                  id: msd_bar_upd
+                  x: 316
+                  y: 330
+                  width: 170
+                  height: 30
+                  radius: 15
+                  bg_color: ${t_updates}
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "UPDATES"
+                        text_font: montserrat_bold_16
+                        text_color: 0x000000
+              - label:
+                  id: msd_v_upd
+                  x: 316
+                  y: 362
+                  width: 170
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: ${t_updates}
+              - obj:
+                  id: msd_bar_sens
+                  x: 534
+                  y: 52
+                  width: 170
+                  height: 30
+                  radius: 15
+                  bg_color: ${c_sensors}
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "CRIT SENSORS"
+                        text_font: montserrat_bold_16
+                        text_color: 0x000000
+              - label:
+                  id: msd_v_sens
+                  x: 534
+                  y: 84
+                  width: 170
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: ${c_sensors}
+              - obj:
+                  id: msd_bar_core
+                  x: 534
+                  y: 330
+                  width: 170
+                  height: 30
+                  radius: 15
+                  bg_color: ${c_ha}
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "CORE UPDATES"
+                        text_font: montserrat_bold_16
+                        text_color: 0x000000
+              - label:
+                  id: msd_v_core
+                  x: 534
+                  y: 362
+                  width: 170
+                  text_align: CENTER
+                  text: "--"
+                  text_font: montserrat_bold_16
+                  text_color: ${c_paper}
+              - obj:
+                  id: msd_bar_ntf
+                  x: 496
+                  y: 388
+                  width: 208
+                  height: 30
+                  radius: 15
+                  bg_color: ${c_ha}
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: "HA NOTIFICATIONS *"
+                        text_font: montserrat_bold_16
+                        text_color: 0x000000
+              - label:
+                  id: msd_v_ntf
+                  x: 496
+                  y: 420
+                  width: 208
+                  text_align: CENTER
+                  text: "NEEDS HA SENSOR *"
+                  text_font: montserrat_bold_16
+                  text_color: ${c_paper}
+              - obj:
+                  id: msd_node_batt
+                  x: 342
+                  y: 146
+                  width: 38
+                  height: 38
+                  radius: 19
+                  bg_color: 0x000000
+                  border_width: 4
+                  border_color: ${c_batt}
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - obj:
+                        id: msd_core_batt
+                        align: CENTER
+                        width: 20
+                        height: 20
+                        radius: 10
+                        bg_color: ${c_green}
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+              - obj:
+                  id: msd_node_energy
+                  x: 346
+                  y: 226
+                  width: 38
+                  height: 38
+                  radius: 19
+                  bg_color: 0x000000
+                  border_width: 4
+                  border_color: ${t_energy}
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - obj:
+                        id: msd_core_energy
+                        align: CENTER
+                        width: 20
+                        height: 20
+                        radius: 10
+                        bg_color: ${c_green}
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+              - obj:
+                  id: msd_node_upd
+                  x: 381
+                  y: 393
+                  width: 38
+                  height: 38
+                  radius: 19
+                  bg_color: 0x000000
+                  border_width: 4
+                  border_color: ${t_updates}
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - obj:
+                        id: msd_core_upd
+                        align: CENTER
+                        width: 20
+                        height: 20
+                        radius: 10
+                        bg_color: ${c_green}
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+              - obj:
+                  id: msd_node_sens
+                  x: 601
+                  y: 131
+                  width: 38
+                  height: 38
+                  radius: 19
+                  bg_color: 0x000000
+                  border_width: 4
+                  border_color: ${c_sensors}
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - obj:
+                        id: msd_core_sens
+                        align: CENTER
+                        width: 20
+                        height: 20
+                        radius: 10
+                        bg_color: ${c_green}
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+              - obj:
+                  id: msd_node_ha
+                  x: 473
+                  y: 217
+                  width: 38
+                  height: 38
+                  radius: 19
+                  bg_color: 0x000000
+                  border_width: 4
+                  border_color: ${c_ha}
+                  pad_all: 0
+                  scrollable: false
+                  widgets:
+                    - obj:
+                        id: msd_core_ha
+                        align: CENTER
+                        width: 20
+                        height: 20
+                        radius: 10
+                        bg_color: ${c_green}
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+
+              # ===== v5.6 VIEWER GAUGES (hidden until their tab is tapped;
+              # the invisible-timer principle at full scale) =====
+              - arc:
+                  id: nrg_arc
+                  hidden: true
+                  x: 40
+                  y: 86
+                  width: 280
+                  height: 280
+                  min_value: 0
+                  max_value: 2000
+                  value: 0
+                  arc_width: 24
+                  adjustable: false
+                  arc_color: 0x14141E
+                  indicator:
+                    arc_color: ${c_green}
+                    arc_width: 24
+                  knob:
+                    bg_opa: TRANSP
+              - label:
+                  id: nrg_val
+                  hidden: true
+                  x: 40
+                  y: 196
+                  width: 280
+                  text_align: CENTER
+                  text: ""
+                  text_font: montserrat_bold_64
+                  text_color: ${c_paper}
+              - label:
+                  id: nrg_cap
+                  hidden: true
+                  x: 40
+                  y: 268
+                  width: 280
+                  text_align: CENTER
+                  text: "WATTS"
+                  text_font: montserrat_bold_20
+                  text_color: ${c_dim}
+              - label:
+                  id: nrg_list
+                  hidden: true
+                  x: 356
+                  y: 118
+                  width: 344
+                  text_align: LEFT
+                  text: ""
+                  text_font: montserrat_bold_24
+                  text_color: ${t_energy}
+              - arc:
+                  id: env_arc_hot
+                  hidden: true
+                  x: 50
+                  y: 96
+                  width: 260
+                  height: 260
+                  min_value: 50
+                  max_value: 100
+                  value: 75
+                  arc_width: 18
+                  adjustable: false
+                  arc_color: 0x14141E
+                  indicator:
+                    arc_color: ${c_red}
+                    arc_width: 18
+                  knob:
+                    bg_opa: TRANSP
+              - arc:
+                  id: env_arc_cold
+                  hidden: true
+                  x: 92
+                  y: 138
+                  width: 176
+                  height: 176
+                  min_value: 50
+                  max_value: 100
+                  value: 70
+                  arc_width: 18
+                  adjustable: false
+                  arc_color: 0x14141E
+                  indicator:
+                    arc_color: ${c_ha}
+                    arc_width: 18
+                  knob:
+                    bg_opa: TRANSP
+              - label:
+                  id: env_val
+                  hidden: true
+                  x: 50
+                  y: 206
+                  width: 260
+                  text_align: CENTER
+                  text: ""
+                  text_font: montserrat_bold_40
+                  text_color: ${c_paper}
+              - label:
+                  id: env_cap
+                  hidden: true
+                  x: 50
+                  y: 252
+                  width: 260
+                  text_align: CENTER
+                  text: "COOLEST / WARMEST"
+                  text_font: montserrat_bold_14
+                  text_color: ${c_dim}
+              - label:
+                  id: env_list
+                  hidden: true
+                  x: 356
+                  y: 140
+                  width: 344
+                  text_align: LEFT
+                  text: ""
+                  text_font: montserrat_bold_24
+                  text_color: ${c_lights}
+
+              # v5.7: invisible touch rows over the top-5 list -
+              # actionable clicks inside the main viewer. Tap a row,
+              # get that plug's detail. Zero pixels until used.
+              - button:
+                  id: nrg_row_0
+                  hidden: true
+                  x: 356
+                  y: 118
+                  width: 344
+                  height: 31
+                  bg_opa: TRANSP
+                  border_width: 0
+                  shadow_width: 0
+                  pad_all: 0
+                  on_click:
+                    - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+                    - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - FETCHING"}
+                    - script.execute: viewer_gauges_hide
+                    - http_request.post:
+                        url: "http://${ha_host_ip}:8123/api/template"
+                        request_headers:
+                          Authorization: !secret ha_token_bearer
+                          Content-Type: "application/json"
+                        json:
+                          template: "{% set ids = ['sensor.attic2_kasa_current_consumption','sensor.hair_dryer_kasa_current_consumption','sensor.master_kasa_current_consumption','sensor.master_kasa2_current_consumption','sensor.cave_kasa_current_consumption','sensor.credenza_kasa_current_consumption','sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power','sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power','sensor.office_main_mss2_power','sensor.shelly_zwave_plug3z_electric_consumption_w','sensor.office_zwave_plug1_electric_consumption_w','sensor.kitchen_zwave_plug4_electric_consumption_w','sensor.attic_zwave_plug3_electric_consumption_w','sensor.mss2_power','sensor.master_bedroom_mastershellyplug1_power','sensor.office_officeshellyplug2_power'] %}{% set ns = namespace(rows=[]) %}{% for i in ids %}{% set v = states(i) %}{% if v not in ['unknown','unavailable'] %}{% set ns.rows = ns.rows + [[state_attr(i,'friendly_name') or i, v | float(0), i]] %}{% endif %}{% endfor %}{% set s = ns.rows | sort(attribute='1', reverse=true) %}{% if s | count > 0 %}{% set r = s[0] %}{% set tot = ns.rows | map(attribute='1') | sum %}{{ r[0] | upper | truncate(22, true, '') }}\n{{ r[1] | round(1) }} W NOW\n{{ ((r[1] / tot * 100) if tot > 0 else 0) | round(0) | int }}% OF HOUSE LOAD\nUPDATED {{ relative_time(states[r[2]].last_changed) | upper }} AGO{% else %}NO DATA{% endif %}"
+                        capture_response: true
+                        max_response_buffer_size: 512
+                        on_response:
+                          - lvgl.label.update:
+                              id: viewer_placeholder
+                              text: !lambda 'static std::string r; r = body; return r.c_str();'
+                          - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - MAIN VIEWER"}
+                          - script.execute: viewer_reset_timer
+              - button:
+                  id: nrg_row_1
+                  hidden: true
+                  x: 356
+                  y: 149
+                  width: 344
+                  height: 31
+                  bg_opa: TRANSP
+                  border_width: 0
+                  shadow_width: 0
+                  pad_all: 0
+                  on_click:
+                    - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+                    - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - FETCHING"}
+                    - script.execute: viewer_gauges_hide
+                    - http_request.post:
+                        url: "http://${ha_host_ip}:8123/api/template"
+                        request_headers:
+                          Authorization: !secret ha_token_bearer
+                          Content-Type: "application/json"
+                        json:
+                          template: "{% set ids = ['sensor.attic2_kasa_current_consumption','sensor.hair_dryer_kasa_current_consumption','sensor.master_kasa_current_consumption','sensor.master_kasa2_current_consumption','sensor.cave_kasa_current_consumption','sensor.credenza_kasa_current_consumption','sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power','sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power','sensor.office_main_mss2_power','sensor.shelly_zwave_plug3z_electric_consumption_w','sensor.office_zwave_plug1_electric_consumption_w','sensor.kitchen_zwave_plug4_electric_consumption_w','sensor.attic_zwave_plug3_electric_consumption_w','sensor.mss2_power','sensor.master_bedroom_mastershellyplug1_power','sensor.office_officeshellyplug2_power'] %}{% set ns = namespace(rows=[]) %}{% for i in ids %}{% set v = states(i) %}{% if v not in ['unknown','unavailable'] %}{% set ns.rows = ns.rows + [[state_attr(i,'friendly_name') or i, v | float(0), i]] %}{% endif %}{% endfor %}{% set s = ns.rows | sort(attribute='1', reverse=true) %}{% if s | count > 1 %}{% set r = s[1] %}{% set tot = ns.rows | map(attribute='1') | sum %}{{ r[0] | upper | truncate(22, true, '') }}\n{{ r[1] | round(1) }} W NOW\n{{ ((r[1] / tot * 100) if tot > 0 else 0) | round(0) | int }}% OF HOUSE LOAD\nUPDATED {{ relative_time(states[r[2]].last_changed) | upper }} AGO{% else %}NO DATA{% endif %}"
+                        capture_response: true
+                        max_response_buffer_size: 512
+                        on_response:
+                          - lvgl.label.update:
+                              id: viewer_placeholder
+                              text: !lambda 'static std::string r; r = body; return r.c_str();'
+                          - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - MAIN VIEWER"}
+                          - script.execute: viewer_reset_timer
+              - button:
+                  id: nrg_row_2
+                  hidden: true
+                  x: 356
+                  y: 180
+                  width: 344
+                  height: 31
+                  bg_opa: TRANSP
+                  border_width: 0
+                  shadow_width: 0
+                  pad_all: 0
+                  on_click:
+                    - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+                    - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - FETCHING"}
+                    - script.execute: viewer_gauges_hide
+                    - http_request.post:
+                        url: "http://${ha_host_ip}:8123/api/template"
+                        request_headers:
+                          Authorization: !secret ha_token_bearer
+                          Content-Type: "application/json"
+                        json:
+                          template: "{% set ids = ['sensor.attic2_kasa_current_consumption','sensor.hair_dryer_kasa_current_consumption','sensor.master_kasa_current_consumption','sensor.master_kasa2_current_consumption','sensor.cave_kasa_current_consumption','sensor.credenza_kasa_current_consumption','sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power','sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power','sensor.office_main_mss2_power','sensor.shelly_zwave_plug3z_electric_consumption_w','sensor.office_zwave_plug1_electric_consumption_w','sensor.kitchen_zwave_plug4_electric_consumption_w','sensor.attic_zwave_plug3_electric_consumption_w','sensor.mss2_power','sensor.master_bedroom_mastershellyplug1_power','sensor.office_officeshellyplug2_power'] %}{% set ns = namespace(rows=[]) %}{% for i in ids %}{% set v = states(i) %}{% if v not in ['unknown','unavailable'] %}{% set ns.rows = ns.rows + [[state_attr(i,'friendly_name') or i, v | float(0), i]] %}{% endif %}{% endfor %}{% set s = ns.rows | sort(attribute='1', reverse=true) %}{% if s | count > 2 %}{% set r = s[2] %}{% set tot = ns.rows | map(attribute='1') | sum %}{{ r[0] | upper | truncate(22, true, '') }}\n{{ r[1] | round(1) }} W NOW\n{{ ((r[1] / tot * 100) if tot > 0 else 0) | round(0) | int }}% OF HOUSE LOAD\nUPDATED {{ relative_time(states[r[2]].last_changed) | upper }} AGO{% else %}NO DATA{% endif %}"
+                        capture_response: true
+                        max_response_buffer_size: 512
+                        on_response:
+                          - lvgl.label.update:
+                              id: viewer_placeholder
+                              text: !lambda 'static std::string r; r = body; return r.c_str();'
+                          - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - MAIN VIEWER"}
+                          - script.execute: viewer_reset_timer
+              - button:
+                  id: nrg_row_3
+                  hidden: true
+                  x: 356
+                  y: 211
+                  width: 344
+                  height: 31
+                  bg_opa: TRANSP
+                  border_width: 0
+                  shadow_width: 0
+                  pad_all: 0
+                  on_click:
+                    - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+                    - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - FETCHING"}
+                    - script.execute: viewer_gauges_hide
+                    - http_request.post:
+                        url: "http://${ha_host_ip}:8123/api/template"
+                        request_headers:
+                          Authorization: !secret ha_token_bearer
+                          Content-Type: "application/json"
+                        json:
+                          template: "{% set ids = ['sensor.attic2_kasa_current_consumption','sensor.hair_dryer_kasa_current_consumption','sensor.master_kasa_current_consumption','sensor.master_kasa2_current_consumption','sensor.cave_kasa_current_consumption','sensor.credenza_kasa_current_consumption','sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power','sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power','sensor.office_main_mss2_power','sensor.shelly_zwave_plug3z_electric_consumption_w','sensor.office_zwave_plug1_electric_consumption_w','sensor.kitchen_zwave_plug4_electric_consumption_w','sensor.attic_zwave_plug3_electric_consumption_w','sensor.mss2_power','sensor.master_bedroom_mastershellyplug1_power','sensor.office_officeshellyplug2_power'] %}{% set ns = namespace(rows=[]) %}{% for i in ids %}{% set v = states(i) %}{% if v not in ['unknown','unavailable'] %}{% set ns.rows = ns.rows + [[state_attr(i,'friendly_name') or i, v | float(0), i]] %}{% endif %}{% endfor %}{% set s = ns.rows | sort(attribute='1', reverse=true) %}{% if s | count > 3 %}{% set r = s[3] %}{% set tot = ns.rows | map(attribute='1') | sum %}{{ r[0] | upper | truncate(22, true, '') }}\n{{ r[1] | round(1) }} W NOW\n{{ ((r[1] / tot * 100) if tot > 0 else 0) | round(0) | int }}% OF HOUSE LOAD\nUPDATED {{ relative_time(states[r[2]].last_changed) | upper }} AGO{% else %}NO DATA{% endif %}"
+                        capture_response: true
+                        max_response_buffer_size: 512
+                        on_response:
+                          - lvgl.label.update:
+                              id: viewer_placeholder
+                              text: !lambda 'static std::string r; r = body; return r.c_str();'
+                          - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - MAIN VIEWER"}
+                          - script.execute: viewer_reset_timer
+              - button:
+                  id: nrg_row_4
+                  hidden: true
+                  x: 356
+                  y: 242
+                  width: 344
+                  height: 31
+                  bg_opa: TRANSP
+                  border_width: 0
+                  shadow_width: 0
+                  pad_all: 0
+                  on_click:
+                    - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+                    - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - FETCHING"}
+                    - script.execute: viewer_gauges_hide
+                    - http_request.post:
+                        url: "http://${ha_host_ip}:8123/api/template"
+                        request_headers:
+                          Authorization: !secret ha_token_bearer
+                          Content-Type: "application/json"
+                        json:
+                          template: "{% set ids = ['sensor.attic2_kasa_current_consumption','sensor.hair_dryer_kasa_current_consumption','sensor.master_kasa_current_consumption','sensor.master_kasa2_current_consumption','sensor.cave_kasa_current_consumption','sensor.credenza_kasa_current_consumption','sensor.smart_switch_24100979083345512004c4e7ae0d2ac4_power','sensor.smart_switch_24100919400168512004c4e7ae0d29eb_power','sensor.office_main_mss2_power','sensor.shelly_zwave_plug3z_electric_consumption_w','sensor.office_zwave_plug1_electric_consumption_w','sensor.kitchen_zwave_plug4_electric_consumption_w','sensor.attic_zwave_plug3_electric_consumption_w','sensor.mss2_power','sensor.master_bedroom_mastershellyplug1_power','sensor.office_officeshellyplug2_power'] %}{% set ns = namespace(rows=[]) %}{% for i in ids %}{% set v = states(i) %}{% if v not in ['unknown','unavailable'] %}{% set ns.rows = ns.rows + [[state_attr(i,'friendly_name') or i, v | float(0), i]] %}{% endif %}{% endfor %}{% set s = ns.rows | sort(attribute='1', reverse=true) %}{% if s | count > 4 %}{% set r = s[4] %}{% set tot = ns.rows | map(attribute='1') | sum %}{{ r[0] | upper | truncate(22, true, '') }}\n{{ r[1] | round(1) }} W NOW\n{{ ((r[1] / tot * 100) if tot > 0 else 0) | round(0) | int }}% OF HOUSE LOAD\nUPDATED {{ relative_time(states[r[2]].last_changed) | upper }} AGO{% else %}NO DATA{% endif %}"
+                        capture_response: true
+                        max_response_buffer_size: 512
+                        on_response:
+                          - lvgl.label.update:
+                              id: viewer_placeholder
+                              text: !lambda 'static std::string r; r = body; return r.c_str();'
+                          - lvgl.label.update: {id: status_msg, text: "PLUG DETAIL - MAIN VIEWER"}
+                          - script.execute: viewer_reset_timer
+
+        # ===== CAMERA ROW (narrower, under the viewer) =====
+        - button:
+            id: btn_porch
+            x: 551
+            y: 125
+            width: 128
+            height: 78
+            radius: 16
+            bg_color: ${c_blue}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.label.update: {id: viewer_placeholder, text: ""}
+              - lvgl.label.update: {id: status_msg, text: "FETCHING FRONT PORCH CAM"}
+              - globals.set: {id: g_snap_name, value: '"FRONT PORCH"'}
+              - lvgl.widget.update: {id: bar_v, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${c_blue}"}
+              - online_image.set_url:
+                  id: viewer_cam_img
+                  url: "http://${ha_host_ip}:5000/api/p2/latest.jpg"
+              - component.update: viewer_cam_img
+              - globals.set: {id: g_view_home, value: 'false'}
+            widgets:
+              # v4.3 memo #7: ONE big camcorder glyph with the channel
+              # number knocked out of its body in the button color.
+              - label:
+                  x: 0
+                  y: 4
+                  width: 128
+                  text_align: CENTER
+                  text: "󰕧"
+                  text_font: mdi_icons_64
+                  text_color: 0x000000
+              - label:
+                  id: porch_sub
+                  align: CENTER
+                  x: -6
+                  y: -2
+                  text: "1"
+                  text_font: montserrat_bold_28
+                  text_color: ${c_blue}
+        - button:
+            id: btn_bay
+            x: 1011
+            y: 125
+            width: 128
+            height: 78
+            radius: 16
+            bg_color: ${c_blue}
+            pad_all: 0
+            shadow_width: 8
+            shadow_offset_x: 2
+            shadow_offset_y: 3
+            shadow_color: 0x000000
+            shadow_opa: 60%
+            pressed:
+              shadow_width: 0
+              translate_x: 2
+              translate_y: 3
+            on_click:
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - script.execute: msd_hide
+              - script.execute: viewer_gauges_hide
+              - lvgl.label.update: {id: viewer_placeholder, text: ""}
+              - lvgl.label.update: {id: status_msg, text: "FETCHING 3RD BAY CAM"}
+              - globals.set: {id: g_snap_name, value: '"3RD BAY"'}
+              - lvgl.widget.update: {id: bar_v, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: bar_h, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: bar_corner_fill, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: band_frame, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: band_window, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: btn_mv, bg_color: "${c_blue}"}
+              - lvgl.widget.update: {id: view_frame, border_color: "${c_blue}"}
+              - online_image.set_url:
+                  id: viewer_cam_img
+                  url: "http://${ha_host_ip}:5000/api/3rdbaycam/latest.jpg"
+              - component.update: viewer_cam_img
+              - globals.set: {id: g_view_home, value: 'false'}
+            widgets:
+              # v4.3 memo #7: ONE big camcorder glyph with the channel
+              # number knocked out of its body in the button color.
+              - label:
+                  x: 0
+                  y: 4
+                  width: 128
+                  text_align: CENTER
+                  text: "󰕧"
+                  text_font: mdi_icons_64
+                  text_color: 0x000000
+              - label:
+                  id: bay_sub
+                  align: CENTER
+                  x: -6
+                  y: -2
+                  text: "2"
+                  text_font: montserrat_bold_28
+                  text_color: ${c_blue}
+
+        # ===== VOL/BRT sliders (declared LAST = drawn on top of the viewer) =====
+        - slider:
+            id: slider_vol
+            hidden: true
+            x: 480
+            y: 236
+            width: 700
+            height: 44
+            min_value: 0
+            max_value: 100
+            value: 50
+            bg_color: 0x33323e
+            indicator:
+              bg_color: ${c_amber}
+            knob:
+              bg_color: ${c_amber}
+            on_release:
+              - globals.set:
+                  id: g_volume
+                  value: !lambda 'return (int) x;'
+              # v3.8: route through the media_player (one volume authority,
+              # HA-visible, persists across boots). Direct audio_dac writes
+              # got silently overwritten by the media_player's boot restore.
+              - media_player.volume_set:
+                  id: display2_media
+                  volume: !lambda 'return x / 100.0;'
+              # v3.10: direct DAC write REMOVED again - v3.9's readback proved
+              # writes land in the codec (slider 75% -> readback 75%), so the
+              # media_player is safely the ONE volume authority now that its
+              # window is capped at the 0 dB point. Readback log kept.
+              - lambda: |-
+                  float rb = id(audio_codec).volume();
+                  ESP_LOGI("audio_diag", "VOL slider=%d%% -> DAC reg readback=%.0f%%", (int) x, rb * 100.0f);
+              - rtttl.play: "beep:d=32,o=6,b=250:c,e"
+              - lvgl.widget.hide: slider_vol
+              - lvgl.label.update:
+                  id: status_msg
+                  text: !lambda 'static std::string r; r = "VOLUME SET: " + std::to_string((int) x) + "%"; return r.c_str();'
+        - slider:
+            id: slider_brt
+            hidden: true
+            x: 480
+            y: 290
+            width: 700
+            height: 44
+            min_value: 25
+            max_value: 100
+            value: 80
+            bg_color: 0x33323e
+            indicator:
+              bg_color: ${c_home}
+            knob:
+              bg_color: ${c_home}
+            on_release:
+              - light.turn_on:
+                  id: backlight
+                  brightness: !lambda 'return x / 100.0;'
+              - lvgl.widget.hide: slider_brt
+              - lvgl.label.update:
+                  id: status_msg
+                  text: !lambda 'static std::string r; r = "BRIGHTNESS SET: " + std::to_string((int) x) + "%"; return r.c_str();'
+

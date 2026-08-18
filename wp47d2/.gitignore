@@ -1,0 +1,6 @@
+secrets.yaml
+.esphome/
+__pycache__/
+*.log
+*.py
+uss_durant_msd_712x452_alt_clean.png
