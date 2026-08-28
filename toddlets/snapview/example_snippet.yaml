@@ -1,0 +1,62 @@
+# =============================================================================
+# SNAPVIEW - example wiring (copy into your device yaml and adjust)
+# Shows: the package include, the substitutions, and the two LVGL widgets
+# SnapView renders into. Tested pattern - a production wall panel runs this
+# against Frigate with two cameras.
+# =============================================================================
+
+substitutions:
+  # --- SnapView ---
+  sv_image_widget_id: img_view
+  sv_caption_id: lbl_view_caption
+  # Any URL that returns a JPEG. Frigate's snapshot API shown here:
+  sv_cam1_url: "http://YOUR-FRIGATE-HOST:5000/api/front_door/latest.jpg"
+  sv_cam2_url: "http://YOUR-FRIGATE-HOST:5000/api/driveway/latest.jpg"
+  sv_cam1_name: "FRONT DOOR"
+  sv_cam2_name: "DRIVEWAY"
+  # Fit box for the fetched frame (scale-to-fit, aspect preserved).
+  # Size it to your viewer's inner content band:
+  sv_resize: "448x290"
+
+packages:
+  snapview: !include snapview.yaml
+
+# Recommended watchdog backstop (a stalled camera must NEVER reboot you):
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "15"
+
+# --- Inside your lvgl: page, wherever your viewer container lives: ---
+#
+#        - obj:
+#            id: viewer_panel
+#            x: 12
+#            y: 124
+#            width: 456
+#            height: 344
+#            radius: 16
+#            pad_all: 4
+#            scrollable: false
+#            widgets:
+#              - image:
+#                  id: img_view            # = sv_image_widget_id
+#                  src: sv_image
+#                  align: TOP_MID
+#                  y: 6
+#                  hidden: true            # shown on first successful fetch
+#              - label:
+#                  id: lbl_view_caption    # = sv_caption_id
+#                  text: "TAP A CAMERA"
+#                  align: BOTTOM_MID
+#                  y: -8
+#            on_click:
+#              - script.execute: sv_refresh
+#
+# --- And two camera buttons (direct taps beat clever carousels): ---
+#
+#            on_click:
+#              - script.execute: sv_show_cam1
+#            on_click:
+#              - script.execute: sv_show_cam2

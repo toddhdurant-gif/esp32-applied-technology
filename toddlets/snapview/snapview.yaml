@@ -1,0 +1,95 @@
+# =============================================================================
+# SNAPVIEW - near-live security views for the cost of ONE HTTP fetch
+# Todd's branded widget. Logic ONLY - no pins, no chip names, no board deps.
+#
+# THE IDEA: don't stream. A small display doesn't need 30fps of RTSP decode
+# to answer "who's at the door?" - it needs the CURRENT frame, on demand.
+# SnapView fetches a single snapshot when (and only when) a view is
+# requested: one HTTP GET per look, zero background load between looks.
+# In production this runs against Frigate's snapshot API, but any URL that
+# returns a JPEG works (HA camera proxy, a rendered dashboard image, a
+# server-side composed graphic - the fetch path doesn't care).
+#
+# LOGIC RULES ENCODED BELOW (all learned on real hardware):
+#   1. ONE shared online_image, retargeted between URLs via set_url -
+#      N cameras cost one image buffer, not N.
+#   2. update_interval: never - nothing polls. Fetches happen on demand.
+#   3. on_download_finished MUST re-bind the LVGL widget with
+#      lvgl.image.update (the src: binding is one-shot at widget setup;
+#      lvgl.widget.redraw only repaints stale content - a confirmed,
+#      twice-shipped bug without this).
+#   4. http_request timeout stays well inside the task-watchdog window -
+#      a stalled camera must produce a failed fetch + retry caption,
+#      never a device reboot. (Pair with a raised wdt as a backstop:
+#      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "15" in your esp32 sdkconfig_options.)
+#   5. Every state is visible: fetching, named view, or failed-tap-to-retry.
+#      No silent failures on a glanceable surface.
+#
+# REQUIRED SUBSTITUTIONS (set in the main device file):
+#   sv_image_widget_id   - the LVGL image widget SnapView renders into
+#   sv_caption_id        - an LVGL label for state/caption text
+#   sv_cam1_url, sv_cam2_url    - JPEG snapshot URLs
+#   sv_cam1_name, sv_cam2_name  - display names for the caption
+#   sv_resize            - fit box for the image buffer, e.g. "448x290"
+#
+# YOUR DEVICE PROVIDES: the two LVGL widgets (see example_snippet.yaml) and
+# tap targets that call sv_show_cam1 / sv_show_cam2 / sv_refresh.
+# =============================================================================
+
+http_request:
+  id: sv_http
+  timeout: 5s
+
+online_image:
+  - id: sv_image
+    url: ${sv_cam1_url}
+    format: JPEG
+    type: RGB565
+    update_interval: never
+    resize: ${sv_resize}
+    on_download_finished:
+      - lvgl.image.update:
+          id: ${sv_image_widget_id}
+          src: sv_image
+      - lvgl.widget.show: ${sv_image_widget_id}
+      - lvgl.label.update:
+          id: ${sv_caption_id}
+          text: !lambda |-
+            static std::string cap;
+            cap = (id(g_sv_active) == 0 ? "${sv_cam1_name}" : "${sv_cam2_name}");
+            cap += " - TAP TO REFRESH";
+            return cap.c_str();
+    on_error:
+      - lvgl.label.update:
+          id: ${sv_caption_id}
+          text: "FETCH FAILED - TAP TO RETRY"
+
+globals:
+  - id: g_sv_active
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+script:
+  - id: sv_show_cam1
+    mode: restart
+    then:
+      - globals.set: {id: g_sv_active, value: '0'}
+      - lvgl.label.update: {id: ${sv_caption_id}, text: "FETCHING ${sv_cam1_name}..."}
+      - online_image.set_url:
+          id: sv_image
+          url: ${sv_cam1_url}
+  - id: sv_show_cam2
+    mode: restart
+    then:
+      - globals.set: {id: g_sv_active, value: '1'}
+      - lvgl.label.update: {id: ${sv_caption_id}, text: "FETCHING ${sv_cam2_name}..."}
+      - online_image.set_url:
+          id: sv_image
+          url: ${sv_cam2_url}
+  # Re-fetch whichever view is active (wire to a tap on the viewer itself)
+  - id: sv_refresh
+    mode: restart
+    then:
+      - lvgl.label.update: {id: ${sv_caption_id}, text: "REFRESHING..."}
+      - component.update: sv_image

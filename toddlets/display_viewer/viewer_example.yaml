@@ -1,0 +1,91 @@
+# =============================================================================
+# DISPLAY VIEWER - minimal complete example (480x480 panel; reflow the
+# geometry for yours). One viewer, two states: idle clock <-> a fetched
+# image view, with tap-to-refresh and honest captions.
+#
+# This is a PATTERN file: LVGL widgets can't merge in via packages, so you
+# copy the blocks below into your device yaml and adjust ids/geometry.
+# Production ancestors: a 4" voice box (network-map viewer) and a 7" wall
+# console (cameras + voice + map) - both running today.
+# =============================================================================
+
+# --- The on-demand image feed (any URL that returns a JPEG) ------------------
+http_request:
+  id: dv_http
+  timeout: 5s          # a stalled server must fail the fetch, not reboot you
+
+online_image:
+  - id: dv_image
+    url: "http://YOUR-SERVER/local/rendered_view.jpg"
+    format: JPEG
+    type: RGB565
+    update_interval: never          # on-demand ONLY - nothing polls
+    resize: 448x290                 # = the viewer's inner content band
+    on_download_finished:
+      - lvgl.image.update: {id: dv_img_widget, src: dv_image}   # MANDATORY rebind
+      - lvgl.widget.show: dv_img_widget
+      - lvgl.widget.hide: dv_idle_clock
+      - lvgl.label.update: {id: dv_caption, text: "TAP TO REFRESH"}
+    on_error:
+      - lvgl.label.update: {id: dv_caption, text: "FETCH FAILED - TAP TO RETRY"}
+
+script:
+  - id: dv_fetch
+    mode: restart
+    then:
+      - lvgl.label.update: {id: dv_caption, text: "FETCHING..."}
+      - component.update: dv_image
+  # ~12s after a view arrives, hand the viewer back to the idle clock
+  - id: dv_return_to_idle
+    mode: restart
+    then:
+      - delay: 12s
+      - lvgl.widget.hide: dv_img_widget
+      - lvgl.widget.show: dv_idle_clock
+      - lvgl.label.update: {id: dv_caption, text: "TAP TO LOAD"}
+
+# --- The viewer region (inside your lvgl: page's widgets: list) --------------
+# - obj:
+#     id: dv_panel
+#     x: 12
+#     y: 124
+#     width: 456
+#     height: 344
+#     radius: 16
+#     pad_all: 4
+#     scrollable: false
+#     widgets:
+#       - label:                     # idle state: the giant clock
+#           id: dv_idle_clock
+#           text: "--:--"
+#           align: CENTER
+#           # text_font: your 80-120pt clock font
+#       - image:                     # content state: the fetched view
+#           id: dv_img_widget
+#           src: dv_image
+#           align: TOP_MID
+#           y: 6
+#           hidden: true
+#       - label:                     # honest state caption, always visible
+#           id: dv_caption
+#           text: "TAP TO LOAD"
+#           align: BOTTOM_MID
+#           y: -8
+#     on_click:
+#       - script.execute: dv_fetch
+#
+# Drive the clock from a 1s interval + strftime lambda (a time-bound label
+# can render once pre-sync and freeze - interval-driven is the proven form):
+#
+# interval:
+#   - interval: 1s
+#     then:
+#       - if:
+#           condition: {time.has_time:}
+#           then:
+#             - lvgl.label.update:
+#                 id: dv_idle_clock
+#                 text: !lambda |-
+#                   static char buf[16];
+#                   id(my_time).now().strftime(buf, sizeof(buf), "%I:%M");
+#                   return (buf[0] == '0') ? buf + 1 : buf;
