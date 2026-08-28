@@ -18,6 +18,7 @@ own, usable with zero training, resilient when the internet isn't.
 |--------|-----------|
 | `wp47d2/` | **The 7" wall panel** — complete ESPHome config (3,000+ lines) for a Waveshare ESP32-P4 touchscreen status board: live Home Assistant callouts on a ship-schematic idle screen, on-demand camera snapshots, voice assist, arc gauges. Compiles as shipped; credentials externalized; every asset original. |
 | `wp47d2/ENGINEERING_DEEP_DIVE.md` | Low-level details for the Waveshare product team and developers who want the nitty-gritty — including the root cause of a deterministic ESP32-P4 boot-loop (a toolchain stack-sanity assert mis-firing on TCM-placed stacks) that took real days to isolate. |
+| `toddlets/communications/` | **The Communications Button** — the fleet's tap-to-talk voice surface as a standalone package: state colors for every pipeline stage, busy guard, measured-not-guessed "Processing" cue, on-screen command + answer text, watchdog reset. Extracted from a hardware-verified build, with the logic explainer and real timing data. |
 
 *Coming next: **What's In The Fridge** — a Home Assistant–native
 fridge-inventory system ("speak your groceries, the display shows what to
@@ -28,6 +29,11 @@ a certain Galaxy-class starship opens it.** Find it, use it, and keep the
 secret until launch day.*
 
 ## The named components (the ideas that repeat across devices)
+
+The reusable widgets are being packaged individually as **Toddlets** —
+self-contained explainer + example-code bundles under `toddlets/`. First one
+live: [The Communications Button](toddlets/communications/). The Display
+Viewer and the twin-camera SnapView packages follow.
 
 - **Interface Engine** — the reusable voice-interaction component. A pure
   UI-logic ESPHome package (IDLE → LISTENING → PROCESSING → RESPONDING state
