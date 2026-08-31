@@ -10,8 +10,8 @@ The design rule behind all of them:
 
 | Toddlet | What it is | Status here |
 |---|---|---|
-| **[The Communications Button](communications/)** | The tap-to-talk voice surface that never lies to you — state colors, busy guard, measured "Processing" cue, on-screen command + answer text, watchdog reset | Explainer + example + timings |
-| **[Display Viewer](display_viewer/)** | One central viewer region, many kinds of content — idle clock, voice responses, cameras, data views — with near-zero load between interactions | Pattern + example |
+| **[The Communications Button](communications_button/)** | The tap-to-talk voice surface that never lies to you — state colors, busy guard, measured "Processing" cue, on-screen command + answer text, watchdog reset | Explainer + example + timings |
+| **[View Screen](view_screen/)** | One central region, many kinds of content — idle clock, voice responses, cameras, data views — with near-zero load between interactions | Pattern + example |
 | **[SnapView](snapview/)** | Near-live security camera views for the cost of ONE HTTP fetch — on-demand snapshots instead of streams, drop-in ESPHome package | Package + example |
 | **DisplayShot** | Every screen serves a live capture of its own framebuffer at `/screenshot` — flash verification, thumbnail walls, remote signage checks | Not yet publishable (upstream license pending) |
 | **The Freshness Traffic Light** | Category-default shelf lives — the fridge tracker that needs zero data entry | Own repo: [whats-in-the-fridge](https://github.com/toddhdurant-gif/whats-in-the-fridge) |

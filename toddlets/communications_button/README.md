@@ -97,7 +97,7 @@ hard questions); STT is the biggest slice of the dead air.
 
 ## What's in this folder
 
-- `communications_example.yaml` — the full extract: audio hardware pattern
+- `communications_button_example.yaml` — the full extract: audio hardware pattern
   (ES8311/ES7210 sample), the state machine, cue script, watchdog, volume
   rules, and the LVGL button + text widgets to drop into your own page.
 - `communications_button.jpg` — the button on the working 480×480 build.
@@ -111,7 +111,7 @@ Bring your own ~1.6s "Processing" WAV (any TTS or a simple tone) as
 - A 7″ wall console carrying the same button (full device config +
   engineering write-up):
   [`wp47d2`](https://github.com/toddhdurant-gif/esp32-applied-technology/tree/main/wp47d2)
-- Pairs naturally with the Display Viewer pattern (one content surface the
+- Pairs naturally with the View Screen pattern (one content surface the
   answer text renders into) and SnapView (on-demand camera stills) — both
   running on the same devices.
 

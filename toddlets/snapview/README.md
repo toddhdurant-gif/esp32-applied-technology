@@ -39,8 +39,8 @@ everything else.
 3. Add the image + caption widgets to your page (snippet in the example),
    and wire taps to `sv_show_cam1` / `sv_show_cam2` / `sv_refresh`.
 
-Pairs naturally with the [Display Viewer](../display_viewer/) (the content
-surface the snapshots land in) and [The Communications Button](../communications/)
+Pairs naturally with the [View Screen](../view_screen/) (the content
+surface the snapshots land in) and [The Communications Button](../communications_button/)
 (same on-demand philosophy, applied to voice).
 
 Runs in production in my house (Home Assistant + Frigate + ESP32-S3 and

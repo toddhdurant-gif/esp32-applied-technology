@@ -18,7 +18,7 @@ own, usable with zero training, resilient when the internet isn't.
 |--------|-----------|
 | `wp47d2/` | **The 7" wall panel** — complete ESPHome config (3,000+ lines) for a Waveshare ESP32-P4 touchscreen status board: live Home Assistant callouts on a ship-schematic idle screen, on-demand camera snapshots, voice assist, arc gauges. Compiles as shipped; credentials externalized; every asset original. |
 | `wp47d2/ENGINEERING_DEEP_DIVE.md` | Low-level details for the Waveshare product team and developers who want the nitty-gritty — including the root cause of a deterministic ESP32-P4 boot-loop (a toolchain stack-sanity assert mis-firing on TCM-placed stacks) that took real days to isolate. |
-| `toddlets/` | **The Toddlets** — the fleet's reusable widgets as standalone explainer + example packages: [The Communications Button](toddlets/communications/) (tap-to-talk voice surface: state colors, busy guard, measured "Processing" cue, on-screen command + answer text, watchdog reset), [Display Viewer](toddlets/display_viewer/) (one content region, many content kinds, near-zero idle load), and [SnapView](toddlets/snapview/) (security cameras for the cost of one HTTP fetch per look — a drop-in ESPHome package). |
+| `toddlets/` | **The Toddlets** — the fleet's reusable widgets as standalone explainer + example packages: [The Communications Button](toddlets/communications_button/) (tap-to-talk voice surface: state colors, busy guard, measured "Processing" cue, on-screen command + answer text, watchdog reset), [View Screen](toddlets/view_screen/) (one content region, many content kinds, near-zero idle load), and [SnapView](toddlets/snapview/) (security cameras for the cost of one HTTP fetch per look — a drop-in ESPHome package). |
 
 *Coming next: **What's In The Fridge** — a Home Assistant–native
 fridge-inventory system ("speak your groceries, the display shows what to
@@ -32,8 +32,8 @@ secret until launch day.*
 
 The reusable widgets are packaged individually as **Toddlets** —
 self-contained explainer + example-code bundles under
-[`toddlets/`](toddlets/): [The Communications Button](toddlets/communications/),
-the [Display Viewer](toddlets/display_viewer/), and
+[`toddlets/`](toddlets/): [The Communications Button](toddlets/communications_button/),
+the [View Screen](toddlets/view_screen/), and
 [SnapView](toddlets/snapview/).
 
 - **Interface Engine** — the reusable voice-interaction component. A pure
@@ -41,7 +41,7 @@ the [Display Viewer](toddlets/display_viewer/), and
   machine) with strict hardware separation: any board wires a talk button
   with one line, and every hard-won fix (the works-once race, I2S bus
   contention) rides along for free.
-- **Display Viewer** — one central content region, many kinds of content:
+- **View Screen** — one central content region, many kinds of content:
   clock at idle, voice responses, camera snapshots, tab detail views. The
   point is what it *doesn't* do: nothing streams, nothing polls. Content
   arrives as a single on-demand fetch per interaction, so a $9 processor
