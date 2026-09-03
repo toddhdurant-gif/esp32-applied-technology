@@ -1,5 +1,7 @@
 # ESP32 Applied Technology — a documented smart-home device fleet
 
+> **The fridge app:** [whats-in-the-fridge](https://github.com/toddhdurant-gif/whats-in-the-fridge) · **Builds on video:** [ESP32 Applied Technology](https://www.youtube.com/@esp32appliedtechnology) · **Plain-language reviews and home help:** [@ToddHDurant](https://www.youtube.com/@ToddHDurant) · **Written reviews:** [toddhdurant.com/reviews](https://toddhdurant.com/reviews)
+
 Wall panels, voice assistants, e-ink dashboards and cameras — a fleet of
 ESP32 devices running a real house on Home Assistant, documented like an
 engineering project: every version, every verification log, every dead end.
