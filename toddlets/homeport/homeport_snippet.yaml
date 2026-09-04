@@ -1,0 +1,31 @@
+# Home Port - the two yaml blocks the page needs. Placeholders only.
+# Copyright (c) 2026 Todd Durant. MIT License.
+#
+# 1. Put home_port.js in a `web/` folder next to this device's yaml.
+# 2. Edit WIRING_URL near the top of home_port.js (the one line you change).
+# 3. If the device also serves DisplayShot on :8082, raise the socket pool:
+#      esp32:
+#        framework:
+#          sdkconfig_options:
+#            CONFIG_LWIP_MAX_SOCKETS: "18"
+#    Every open Home Port tab holds a socket; the default pool drains and the
+#    server resets every connection once the page gets popular.
+
+web_server:
+  version: 3
+  # js_include accepts exactly ONE file. If you already inject a script,
+  # merge its behaviour into this one - do not add a second line.
+  js_include: "web/home_port.js"
+  # Uncomment to bundle ESPHome's UI into flash so the page renders on a LAN
+  # with no internet. Until this is set, the footer honestly says "Offline: not yet".
+  # local: true
+
+text_sensor:
+  # Build-identity marker. Every flashed build gets a distinct string; the
+  # Home Port masthead and Build tile read it live, and OTA verification reads
+  # it back to prove the new firmware is the one running. The name must
+  # contain "Build Stage" - the script matches on the entity name.
+  - platform: template
+    name: "<device-name> Build Stage"
+    lambda: 'return std::string("v1.0-first-homeport-<yyyy-mm-dd>");'
+    update_interval: 300s

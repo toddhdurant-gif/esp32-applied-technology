@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>DisplayShot Live</title>
+<style>
+  html, body { margin: 0; background: #000; color: #9ad; font: 13px/1.4 system-ui, sans-serif; height: 100%; }
+  #wrap { display: flex; flex-direction: column; height: 100%; }
+  #bar { display: flex; gap: 12px; align-items: center; padding: 6px 10px; background: #111; }
+  #bar input { width: 170px; background: #000; color: #fff; border: 1px solid #345; padding: 3px 6px; }
+  #bar select, #bar button { background: #000; color: #fff; border: 1px solid #345; padding: 3px 6px; }
+  #stage { flex: 1; display: flex; align-items: center; justify-content: center; }
+  img { max-width: 100%; max-height: 100%; image-rendering: auto; }
+  #status { margin-left: auto; opacity: .8; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="bar">
+    <b>DisplayShot Live</b>
+    <label>device <input id="host" value="" placeholder="&lt;device-ip&gt;:8082"></label>
+    <label>every <select id="rate">
+      <option value="1000">1 s</option>
+      <option value="2000" selected>2 s</option>
+      <option value="3000">3 s</option>
+      <option value="5000">5 s</option>
+    </select></label>
+    <button id="pause">pause</button>
+    <span id="status">starting</span>
+  </div>
+  <div id="stage"><img id="frame" alt="waiting for the first frame"></div>
+</div>
+<script>
+  // Pulls http://<device>:8082/screenshot on a timer. One request in flight at a time, so a slow
+  // frame never stacks requests on the panel. A frame that fails leaves the last good one up.
+  const img = document.getElementById('frame'), status = document.getElementById('status');
+  const host = document.getElementById('host'), rate = document.getElementById('rate'), pauseBtn = document.getElementById('pause');
+  let paused = false, timer = null, n = 0, lastMs = 0;
+  function url() { return 'http://' + host.value.trim() + '/screenshot?t=' + Date.now(); }
+  function tick() {
+    if (paused) return;
+    if (!host.value.trim()) { status.textContent = 'enter the device address above (e.g. <device-ip>:8082)'; return; }
+    const t0 = performance.now();
+    const probe = new Image();
+    probe.onload = () => { img.src = probe.src; n++; lastMs = Math.round(performance.now() - t0);
+      status.textContent = 'frame ' + n + ' · ' + lastMs + ' ms · ' + new Date().toLocaleTimeString(); schedule(); };
+    probe.onerror = () => { status.textContent = 'no frame (' + new Date().toLocaleTimeString() + ') - keeping the last one'; schedule(); };
+    probe.src = url();
+  }
+  function schedule() { clearTimeout(timer); timer = setTimeout(tick, parseInt(rate.value, 10)); }
+  pauseBtn.onclick = () => { paused = !paused; pauseBtn.textContent = paused ? 'resume' : 'pause'; if (!paused) tick(); };
+  rate.onchange = schedule; host.onchange = () => { n = 0; tick(); };
+  tick();
+</script>
+</body>
+</html>
