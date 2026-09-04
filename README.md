@@ -79,6 +79,12 @@ Icons](https://github.com/Templarian/MaterialDesign) (Apache 2.0). Gauge
 inspiration: [gauge-card-pro](https://github.com/benjamin-dcs/gauge-card-pro)
 by benjamin-dcs. All artwork original.
 
+**Permission pending.** The DisplayShot screenshot component is by
+[dcgrove](https://github.com/dcgrove/esphome-lvgl-screenshot) and carries no
+licence; I asked for one on 2026-08-26 ([issue #2](https://github.com/dcgrove/esphome-lvgl-screenshot/issues/2))
+and have had no reply, so it is not included in this repository. Fetch it from
+the author. Everything else here is mine or credited above.
+
 ---
 
 *Todd Durant — [toddhdurant.com](https://www.toddhdurant.com) ·

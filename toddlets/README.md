@@ -13,8 +13,11 @@ The design rule behind all of them:
 | **[The Communications Button](communications_button/)** | The tap-to-talk voice surface that never lies to you — state colors, busy guard, measured "Processing" cue, on-screen command + answer text, watchdog reset | Explainer + example + timings |
 | **[View Screen](view_screen/)** | One central region, many kinds of content — idle clock, voice responses, cameras, data views — with near-zero load between interactions | Pattern + example |
 | **[SnapView](snapview/)** | Near-live security camera views for the cost of ONE HTTP fetch — on-demand snapshots instead of streams, drop-in ESPHome package | Package + example |
-| **DisplayShot** | Every screen serves a live capture of its own framebuffer at `/screenshot` — flash verification, thumbnail walls, remote signage checks | Not yet publishable (upstream license pending) |
+| **DisplayShot** | Every screen serves a live capture of its own framebuffer at `/screenshot` — flash verification, thumbnail walls, remote signage checks | Not included — see the permission note below |
 | **The Freshness Traffic Light** | Category-default shelf lives — the fridge tracker that needs zero data entry | Own repo: [whats-in-the-fridge](https://github.com/toddhdurant-gif/whats-in-the-fridge) |
+
+
+> **DisplayShot — a permission note.** DisplayShot (the live screenshot on port 8082) uses a small ESPHome component by dcgrove, [esphome-lvgl-screenshot](https://github.com/dcgrove/esphome-lvgl-screenshot), which has no licence file. I asked the author on 2026-08-26 to add one ([issue #2](https://github.com/dcgrove/esphome-lvgl-screenshot/issues/2)) and have not had a reply. Until that changes the component is not included here: pull it from the author's repository yourself. My local copy carries two changes for LVGL 9 / ESP32-P4 (the draw-buffer API and a rotation fix); I will publish those as a patch the day the licence question is settled.
 
 ## Why on-demand beats streaming on small hardware
 
